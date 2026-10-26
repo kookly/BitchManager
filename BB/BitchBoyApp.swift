@@ -5627,6 +5627,7 @@ final class BitchBoyEngine: ObservableObject {
             "escape": 53, "esc": 53,
             "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
             "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+            "f13": 105, "f14": 107, "f15": 113, "f16": 106, "f17": 64, "f18": 79, "f19": 80, "f20": 90,
             "left": 123, "right": 124, "down": 125, "up": 126
         ]
 
@@ -6385,6 +6386,8 @@ struct ContentView: View {
     @State private var activeMemoryBank: Int = 0 // 0 = BANK 1 (A-D), 1 = BANK 2 (E-H)
     @State private var showSlotCustomizer: Bool = false
     @State private var inspectorTab: Int = 0 // 0 = LEDs, 1 = QWERTY
+    @State private var isEditingNameBox: Bool = false
+    @FocusState private var isNameFieldFocused: Bool
     @State private var jigglePhase: Bool = false
     @State private var resizingModule: StudioModuleID? = nil
         @State private var dragInitialHeight: CGFloat = 0
@@ -6398,6 +6401,7 @@ struct ContentView: View {
     }
 
     private func setQwertyKeyForSelection(_ key: String) {
+        isEditingNameBox = false
         let targets = engine.selectedIndices.count > 1 ? Array(engine.selectedIndices) : [engine.selectedIndex]
         for idx in targets where engine.controls[idx].hasLED {
             engine.controls[idx].actionType = .qwerty
@@ -11190,9 +11194,31 @@ struct ContentView: View {
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(white: 0.65))
                     Spacer()
-                    Text("BRUSH: \(BitchBoyHardwareColor.formattedLabel(for: engine.customBrushVelocity))")
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                        .foregroundColor(ledColor(engine.customBrushVelocity))
+                    HStack(spacing: 3) {
+                        Text("BRUSH: \(BitchBoyHardwareColor.formattedLabel(for: engine.customBrushVelocity))")
+                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .foregroundColor(ledColor(engine.customBrushVelocity))
+                        HStack(spacing: 1.5) {
+                            Text("V:")
+                                .font(.system(size: 6, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(white: 0.5))
+                            TextField("78", text: Binding(
+                                get: { String(engine.customBrushVelocity) },
+                                set: { val in
+                                    if let num = Int(val.filter { $0.isNumber }) {
+                                        engine.customBrushVelocity = UInt8(min(max(num, 0), 127))
+                                    }
+                                }
+                            ))
+                            .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 24, height: 13)
+                            .background(Color.black.opacity(0.6))
+                            .overlay(RoundedRectangle(cornerRadius: 2.5).stroke(Color.white.opacity(0.2), lineWidth: 0.8))
+                            .clipShape(RoundedRectangle(cornerRadius: 2.5))
+                        }
+                    }
                 }
 
                 HStack(alignment: .top, spacing: 6) {
@@ -11783,9 +11809,31 @@ struct ContentView: View {
                             Spacer()
 
                             if !engine.reactiveFXRainbowColor {
-                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
-                                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
-                                    .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
+                                HStack(spacing: 3) {
+                                    Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
+                                        .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                                        .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
+                                    HStack(spacing: 1.5) {
+                                        Text("V:")
+                                            .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
+                                            .foregroundColor(Color(white: 0.5))
+                                        TextField("78", text: Binding(
+                                            get: { String(engine.reactiveFXColorVelocity) },
+                                            set: { val in
+                                                if let num = Int(val.filter { $0.isNumber }) {
+                                                    engine.reactiveFXColorVelocity = UInt8(min(max(num, 0), 127))
+                                                }
+                                            }
+                                        ))
+                                        .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.center)
+                                        .frame(width: 24 * scale, height: 13 * scale)
+                                        .background(Color.black.opacity(0.6))
+                                        .overlay(RoundedRectangle(cornerRadius: 2.5).stroke(Color.white.opacity(0.2), lineWidth: 0.8))
+                                        .clipShape(RoundedRectangle(cornerRadius: 2.5))
+                                    }
+                                }
                             } else {
                                 Text("MULTI-COLOR")
                                     .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
@@ -11981,6 +12029,7 @@ struct ContentView: View {
                                 color: ledColor(engine.controls[idx].currentLED),
                                 sectionBorder: engine.currentTheme.sectionOutline,
                                 onTap: {
+                                    isEditingNameBox = false
                                     let isShift = NSEvent.modifierFlags.contains(.shift)
                                     engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                                 }
@@ -12225,18 +12274,68 @@ struct ContentView: View {
                     }
                 }
 
-                // Custom Name Editor
+                // Custom Name Editor (Only opens for typing when explicitly clicked!)
                 HStack(spacing: 4) {
                     Text("NAME:")
                         .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
-                    TextField("Custom Name", text: $engine.controls[engine.selectedIndex].customName)
+
+                    if isEditingNameBox {
+                        TextField("Custom Name", text: $engine.controls[engine.selectedIndex].customName, onCommit: {
+                            isEditingNameBox = false
+                            engine.saveCurrentSlot()
+                        })
+                        .focused($isNameFieldFocused)
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.5))
+                        .background(Color.black.opacity(0.75))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(engine.currentTheme.accentPrimary, lineWidth: 1.2)
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                        Button(action: {
+                            isEditingNameBox = false
+                            engine.saveCurrentSlot()
+                        }) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 7, weight: .heavy))
+                                .padding(3)
+                                .background(engine.currentTheme.accentPrimary)
+                                .foregroundColor(.black)
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        HStack(spacing: 4) {
+                            let custom = engine.controls[engine.selectedIndex].customName
+                            Text(custom.isEmpty ? selectedControl.label : custom)
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(custom.isEmpty ? Color(white: 0.5) : .white)
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "pencil")
+                                .font(.system(size: 6.5))
+                                .foregroundColor(Color(white: 0.45))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.black.opacity(0.45))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isEditingNameBox = true
+                            isNameFieldFocused = true
+                        }
+                    }
                 }
 
                 // Subtitle
@@ -12292,11 +12391,45 @@ struct ContentView: View {
                     if inspectorTab == 0 {
                         // TAB 1: LED VELOCITIES & PALETTE
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack {
+                            HStack(spacing: 4) {
                                 Text(engine.selectedIndices.count > 1 ? "IDLE LED (BATCH):" : "IDLE LED:")
                                     .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                                     .foregroundColor(Color(white: 0.7))
                                 Spacer()
+
+                                // Direct Velocity Number Input Box
+                                HStack(spacing: 2) {
+                                    Text("VEL:")
+                                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.5))
+                                    TextField("0", text: Binding(
+                                        get: { String(engine.controls[engine.selectedIndex].idleVelocity) },
+                                        set: { val in
+                                            let digits = val.filter { $0.isNumber }
+                                            if let num = Int(digits) {
+                                                let clamped = UInt8(min(max(num, 0), 127))
+                                                let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
+                                                for idx in targets where engine.controls[idx].hasLED {
+                                                    engine.controls[idx].idleVelocity = clamped
+                                                    engine.controls[idx].currentLED = clamped
+                                                    engine.sendNoteOn(note: engine.controls[idx].number, velocity: clamped)
+                                                }
+                                                engine.saveCurrentSlot()
+                                            }
+                                        }
+                                    ))
+                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .textFieldStyle(.plain)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: 28, height: 15)
+                                    .background(Color.black.opacity(0.6))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                }
+
                                 Circle()
                                     .fill(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
                                     .frame(width: 7, height: 7)
@@ -12326,11 +12459,43 @@ struct ContentView: View {
 
                         // Pressed Velocity Slider
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack {
+                            HStack(spacing: 4) {
                                 Text(engine.selectedIndices.count > 1 ? "PRESSED LED (BATCH):" : "PRESSED LED:")
                                     .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                                     .foregroundColor(Color(white: 0.7))
                                 Spacer()
+
+                                // Direct Velocity Number Input Box
+                                HStack(spacing: 2) {
+                                    Text("VEL:")
+                                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.5))
+                                    TextField("0", text: Binding(
+                                        get: { String(engine.controls[engine.selectedIndex].activeVelocity) },
+                                        set: { val in
+                                            let digits = val.filter { $0.isNumber }
+                                            if let num = Int(digits) {
+                                                let clamped = UInt8(min(max(num, 0), 127))
+                                                let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
+                                                for idx in targets where engine.controls[idx].hasLED {
+                                                    engine.controls[idx].activeVelocity = clamped
+                                                }
+                                                engine.saveCurrentSlot()
+                                            }
+                                        }
+                                    ))
+                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .textFieldStyle(.plain)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: 28, height: 15)
+                                    .background(Color.black.opacity(0.6))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                }
+
                                 Circle()
                                     .fill(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
                                     .frame(width: 7, height: 7)
@@ -12457,8 +12622,8 @@ struct ContentView: View {
                                                 }
                                             }
                                         }
-                                        Section("FUNCTION KEYS") {
-                                            ForEach(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"], id: \.self) { k in
+                                        Section("FUNCTION KEYS (F1–F24)") {
+                                            ForEach((1...24).map { "f\($0)" }, id: \.self) { k in
                                                 Button(k.uppercased()) {
                                                     setQwertyKeyForSelection(k)
                                                 }
@@ -12633,6 +12798,15 @@ struct ContentView: View {
             }
             .padding(10)
         }
+        .onChange(of: engine.selectedIndex) {
+            isEditingNameBox = false
+        }
+        .onChange(of: isNameFieldFocused) {
+            if !isNameFieldFocused && isEditingNameBox {
+                isEditingNameBox = false
+                engine.saveCurrentSlot()
+            }
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -12680,6 +12854,7 @@ struct ContentView: View {
                                 color: ledColor(engine.controls[idx].currentLED),
                                 sectionBorder: engine.currentTheme.sectionOutline,
                                 onTap: {
+                                    isEditingNameBox = false
                                     let isShift = NSEvent.modifierFlags.contains(.shift)
                                     engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                                 }
