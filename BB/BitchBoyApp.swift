@@ -5840,8 +5840,8 @@ struct HardwareKeyCap: View {
                 // Labels & Center Action Cross
                 VStack(spacing: 0) {
                     Text(item.customName.isEmpty ? item.label : item.customName)
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(isLit ? .white : Color(white: 0.7))
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(isLit ? .white : Color(white: 0.88))
                         .padding(.top, 2)
                         .lineLimit(1)
 
@@ -5854,15 +5854,15 @@ struct HardwareKeyCap: View {
                             .frame(width: 14, height: 14)
 
                         Image(systemName: actionIconName(item.actionType))
-                            .font(.system(size: 7.5, weight: .semibold))
-                            .foregroundColor(isLit ? .white : Color(white: 0.65))
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(isLit ? .white : Color(white: 0.75))
                     }
 
                     Spacer(minLength: 0)
 
                     Text("N\(item.number)")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(isLit ? .white.opacity(0.9) : Color(white: 0.55))
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(isLit ? .white.opacity(0.95) : Color(white: 0.78))
                         .padding(.bottom, 2)
                 }
             }
@@ -5899,8 +5899,8 @@ struct HardwareVerticalFader: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(item.label)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.65))
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.85))
 
             // Vertical Track & Cap
             GeometryReader { geo in
@@ -5955,8 +5955,8 @@ struct HardwareVerticalFader: View {
             .frame(width: 42, height: 110)
 
             Text("CC\(item.number)")
-                .font(.system(size: 7, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(red: 0.94, green: 0.76, blue: 0.38))
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 2)
@@ -5975,8 +5975,8 @@ struct HardwareHorizontalFader: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(item.label)
-                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.65))
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.85))
                 .frame(width: 28, alignment: .leading)
 
             GeometryReader { geo in
@@ -6030,9 +6030,9 @@ struct HardwareHorizontalFader: View {
             .frame(height: 24)
 
             Text("CC\(item.number)")
-                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(red: 0.94, green: 0.76, blue: 0.38))
-                .frame(width: 34, alignment: .trailing)
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
+                .frame(width: 36, alignment: .trailing)
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
@@ -6087,11 +6087,11 @@ struct HardwareKnob: View {
 
             HStack(spacing: 3) {
                 Text(item.label)
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     .foregroundColor(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(red: 0.45, green: 0.88, blue: 0.75))
                 Text("CC\(item.number)")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
             }
         }
         .frame(width: 58)
@@ -6266,10 +6266,10 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     HStack(spacing: 6) {
                         Image(systemName: module.iconName)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
                         Text("FLOATING // \(module.rawValue.uppercased())")
-                            .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(.white)
                         Spacer()
 
@@ -6281,9 +6281,9 @@ struct ContentView: View {
                                 Image(systemName: isTopMost ? "pin.fill" : "pin")
                                 Text(isTopMost ? "PINNED" : "PIN")
                             }
-                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3.5)
+                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
                             .background(isTopMost ? Color(red: 1.0, green: 0.35, blue: 0.15) : Color.white.opacity(0.12))
                             .foregroundColor(isTopMost ? .black : .white)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -6301,9 +6301,9 @@ struct ContentView: View {
                                 Image(systemName: "arrow.down.left.square.fill")
                                 Text("DOCK")
                             }
-                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3.5)
+                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
                             .background(engine.currentTheme.accentPrimary)
                             .foregroundColor(.black)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -6432,160 +6432,164 @@ struct ContentView: View {
                     .blur(radius: isOverlayActive ? 14 : 0)
                     .scaleEffect(isOverlayActive ? 0.97 : 1.0)
                     .animation(.spring(response: 0.34, dampingFraction: 0.8), value: isOverlayActive)
-
-                    // CENTER SPOTLIGHT MODULE OVERLAY (When user clicks the top bar of any module!)
-                    if let spotMod = engine.spotlightModule {
-                        ZStack {
-                            // Clickable translucent cyber backdrop over the blurred console
-                            Color.black.opacity(0.65)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                                        engine.spotlightModule = nil
-                                    }
-                                }
-
-                            VStack(spacing: 0) {
-                                // Spotlight Control Strip
-                                HStack(spacing: 8) {
-                                    Image(systemName: spotMod.iconName)
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundColor(engine.currentTheme.accentPrimary)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        HStack(spacing: 6) {
-                                            Text("CENTER SPOTLIGHT // \(spotMod.rawValue.uppercased())")
-                                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                                                .foregroundColor(.white)
-                                            Circle().fill(Color.green).frame(width: 6, height: 6)
-                                            Text("LIVE")
-                                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                                .foregroundColor(Color.green)
-                                        }
-                                        Text("Enlarged studio view • Edit settings or pop out to floating window")
-                                            .font(.system(size: 7, design: .monospaced))
-                                            .foregroundColor(Color(white: 0.6))
-                                    }
-
-                                    Spacer()
-
-                                    // Dynamic Size Presets inside Spotlight
-                                    HStack(spacing: 2) {
-                                        Button(action: {
-                                            engine.setModuleHeight(spotMod, height: 210, save: true)
-                                        }) {
-                                            Text("COMPACT")
-                                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3.5)
-                                                .background(Color.white.opacity(0.08))
-                                                .foregroundColor(Color(white: 0.75))
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        }
-                                        .buttonStyle(.plain)
-
-                                        Button(action: {
-                                            engine.setModuleHeight(spotMod, height: 340, save: true)
-                                        }) {
-                                            Text("STANDARD")
-                                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3.5)
-                                                .background(Color.white.opacity(0.08))
-                                                .foregroundColor(Color(white: 0.75))
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        }
-                                        .buttonStyle(.plain)
-
-                                        Button(action: {
-                                            engine.setModuleHeight(spotMod, height: 480, save: true)
-                                        }) {
-                                            Text("EXPANDED")
-                                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3.5)
-                                                .background(Color.white.opacity(0.08))
-                                                .foregroundColor(Color(white: 0.75))
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-
-                                    Button(action: {
-                                        engine.popOutModuleToWindow(spotMod)
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "macwindow.badge.plus")
-                                            Text("OPEN IN OWN WINDOW")
-                                        }
-                                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 5)
-                                        .background(Color.white.opacity(0.14))
-                                        .foregroundColor(engine.currentTheme.accentPrimary)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .hoverGrow(1.05)
-
-                                    Button(action: {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                                            engine.spotlightModule = nil
-                                        }
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "xmark.circle.fill")
-                                            Text("RETURN TO DOCK")
-                                        }
-                                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 5)
-                                        .background(engine.currentTheme.accentPrimary)
-                                        .foregroundColor(.black)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .hoverGrow(1.05)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(Color(red: 0.04, green: 0.10, blue: 0.09).opacity(0.98))
-                                .overlay(Rectangle().frame(height: 1).foregroundColor(engine.currentTheme.accentPrimary.opacity(0.3)), alignment: .bottom)
-
-                                // Module Content Rendered in full width, crisp and responsive with NO scaleEffect!
-                                moduleContentView(for: spotMod, isSpotlight: true)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            }
-                            .frame(width: 720, height: 600)
-                            .background(Color(red: 0.03, green: 0.05, blue: 0.06).opacity(0.98))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(engine.currentTheme.accentPrimary, lineWidth: 1.5))
-                            .shadow(color: engine.currentTheme.accentPrimary.opacity(0.45), radius: 24, x: 0, y: 8)
-                            .shadow(color: Color.black.opacity(0.9), radius: 36, x: 0, y: 14)
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                        }
-                    }
-
-                    // CUSTOM SOUND UPLOAD STUDIO OVERLAY (Centered with Blurred Console Behind It)
-                    if engine.showCustomSoundStudio {
-                        customSoundStudioOverlay
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                    }
-
-                    // CUSTOM THEME STUDIO OVERLAY (Centered with Blurred Console Behind It)
-                    if engine.showCustomThemeStudio {
-                        customThemeStudioOverlay
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                    }
-
-                    // GITHUB AUTO-UPDATER OVERLAY (Centered with Blurred Console Behind It)
-                    if engine.showUpdateModal {
-                        updateSheetOverlay
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                    }
                 }
                 .frame(width: baseWidth, height: baseHeight, alignment: .top)
                 .scaleEffect(fitScale, anchor: .center)
                 .frame(width: windowGeo.size.width, height: windowGeo.size.height, alignment: .center)
+
+                // CENTER SPOTLIGHT MODULE OVERLAY (When user clicks the top bar of any module!)
+                // Rendered at native unscaled resolution outside fitScale for razor-sharp legibility on any display size!
+                if let spotMod = engine.spotlightModule {
+                    let spotW = min(880, max(520, windowGeo.size.width - 32))
+                    let spotH = min(720, max(420, windowGeo.size.height - 32))
+
+                    ZStack {
+                        // Clickable translucent cyber backdrop over the blurred console
+                        Color.black.opacity(0.68)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                                    engine.spotlightModule = nil
+                                }
+                            }
+
+                        VStack(spacing: 0) {
+                            // Spotlight Control Strip
+                            HStack(spacing: 8) {
+                                Image(systemName: spotMod.iconName)
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(engine.currentTheme.accentPrimary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text("CENTER SPOTLIGHT // \(spotMod.rawValue.uppercased())")
+                                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                            .foregroundColor(.white)
+                                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                                        Text("LIVE")
+                                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                            .foregroundColor(Color.green)
+                                    }
+                                    Text("Enlarged studio view • Edit settings or pop out to floating window")
+                                        .font(.system(size: 8.5, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.72))
+                                }
+
+                                Spacer()
+
+                                // Dynamic Size Presets inside Spotlight
+                                HStack(spacing: 3) {
+                                    Button(action: {
+                                        engine.setModuleHeight(spotMod, height: 210, save: true)
+                                    }) {
+                                        Text("COMPACT")
+                                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(Color.white.opacity(0.10))
+                                            .foregroundColor(Color(white: 0.85))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(action: {
+                                        engine.setModuleHeight(spotMod, height: 340, save: true)
+                                    }) {
+                                        Text("STANDARD")
+                                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(Color.white.opacity(0.10))
+                                            .foregroundColor(Color(white: 0.85))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(action: {
+                                        engine.setModuleHeight(spotMod, height: 480, save: true)
+                                    }) {
+                                        Text("EXPANDED")
+                                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(Color.white.opacity(0.10))
+                                            .foregroundColor(Color(white: 0.85))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                Button(action: {
+                                    engine.popOutModuleToWindow(spotMod)
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "macwindow.badge.plus")
+                                        Text("OPEN IN OWN WINDOW")
+                                    }
+                                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.white.opacity(0.14))
+                                    .foregroundColor(engine.currentTheme.accentPrimary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                .buttonStyle(.plain)
+                                .hoverGrow(1.05)
+
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                                        engine.spotlightModule = nil
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "xmark.circle.fill")
+                                        Text("RETURN TO DOCK")
+                                    }
+                                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(engine.currentTheme.accentPrimary)
+                                    .foregroundColor(.black)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                .buttonStyle(.plain)
+                                .hoverGrow(1.05)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color(red: 0.04, green: 0.10, blue: 0.09).opacity(0.98))
+                            .overlay(Rectangle().frame(height: 1).foregroundColor(engine.currentTheme.accentPrimary.opacity(0.3)), alignment: .bottom)
+
+                            // Module Content Rendered in full width, crisp and responsive with NO scaleEffect!
+                            moduleContentView(for: spotMod, isSpotlight: true)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        }
+                        .frame(width: spotW, height: spotH)
+                        .background(Color(red: 0.03, green: 0.05, blue: 0.06).opacity(0.98))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(engine.currentTheme.accentPrimary, lineWidth: 1.5))
+                        .shadow(color: engine.currentTheme.accentPrimary.opacity(0.45), radius: 24, x: 0, y: 8)
+                        .shadow(color: Color.black.opacity(0.9), radius: 36, x: 0, y: 14)
+                        .transition(.scale(scale: 0.90).combined(with: .opacity))
+                    }
+                }
+
+                // CUSTOM SOUND UPLOAD STUDIO OVERLAY (Centered with Blurred Console Behind It)
+                if engine.showCustomSoundStudio {
+                    customSoundStudioOverlay
+                        .transition(.scale(scale: 0.90).combined(with: .opacity))
+                }
+
+                // CUSTOM THEME STUDIO OVERLAY (Centered with Blurred Console Behind It)
+                if engine.showCustomThemeStudio {
+                    customThemeStudioOverlay
+                        .transition(.scale(scale: 0.90).combined(with: .opacity))
+                }
+
+                // GITHUB AUTO-UPDATER OVERLAY (Centered with Blurred Console Behind It)
+                if engine.showUpdateModal {
+                    updateSheetOverlay
+                        .transition(.scale(scale: 0.90).combined(with: .opacity))
+                }
             }
             .onAppear {
                 engine.lastComputedFitScale = fitScale
@@ -7415,10 +7419,10 @@ struct ContentView: View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.bottomthird.inset.filled")
-                    .font(.system(size: 8.5, weight: .bold))
+                    .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text("CONSOLE EXPANSION BAY // BOTTOM RACK READY")
-                    .font(.system(size: 7.8, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
                 Menu {
@@ -7430,11 +7434,11 @@ struct ContentView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                         Text("DOCK MODULE HERE")
                     }
-                    .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -7507,13 +7511,13 @@ struct ContentView: View {
             }) {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.up.and.down")
-                        .font(.system(size: 6.5, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                     Text(engine.moduleSizePresetLabel(module))
-                        .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
                 }
                 .foregroundColor(engine.currentTheme.accentPrimary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2.5)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
                 .background(engine.currentTheme.accentPrimary.opacity(0.18))
                 .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
@@ -7528,13 +7532,13 @@ struct ContentView: View {
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: "arrow.left.and.right")
-                            .font(.system(size: 6.5, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                         Text(engine.moduleWidthPresetLabel(module))
-                            .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
                     }
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
                     .background(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.18))
                     .clipShape(RoundedRectangle(cornerRadius: 3.5))
                 }
@@ -7679,8 +7683,8 @@ struct ContentView: View {
     private func moduleResizeHandleBar(for mod: StudioModuleID, currentHeight: CGFloat, zone: ModuleZone) -> some View {
         HStack(spacing: 4) {
             Text("↕ RESIZE")
-                .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
-                .foregroundColor(Color(white: 0.45))
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .foregroundColor(Color(white: 0.70))
 
             Spacer()
 
@@ -7695,24 +7699,24 @@ struct ContentView: View {
                     engine.cycleModuleWidthPreset(mod)
                 }) {
                     Text("WIDTH: \(engine.moduleWidthPresetLabel(mod))")
-                        .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Color.white.opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
                 .help("Cycle width preset in Bottom Rack (Compact / Half / Wide / Full)")
             }
 
             Text("\(Int(currentHeight))PX")
-                .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.85))
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.95))
 
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 6.5, weight: .bold))
-                .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.8))
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(engine.currentTheme.accentPrimary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -7743,46 +7747,46 @@ struct ContentView: View {
     private func moduleRearrangeActionBar(for mod: StudioModuleID, currentZone: ModuleZone) -> some View {
         HStack(spacing: 3) {
             Image(systemName: "hand.draw.fill")
-                .font(.system(size: 7, weight: .bold))
+                .font(.system(size: 8.5, weight: .bold))
                 .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.22))
             Text("MOVE:")
-                .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.22))
 
             Spacer(minLength: 2)
 
             Button("⇦ LW") { engine.moveModuleToZone(mod, zone: .leftWing) }
                 .buttonStyle(.plain)
-                .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 3.5)
-                .padding(.vertical, 1.5)
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2)
                 .background(currentZone == .leftWing ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
                 .foregroundColor(currentZone == .leftWing ? .black : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
 
             Button("⇨ RW") { engine.moveModuleToZone(mod, zone: .rightWing) }
                 .buttonStyle(.plain)
-                .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 3.5)
-                .padding(.vertical, 1.5)
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2)
                 .background(currentZone == .rightWing ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
                 .foregroundColor(currentZone == .rightWing ? .black : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
 
             Button("⇩ RACK") { engine.moveModuleToZone(mod, zone: .bottomRack) }
                 .buttonStyle(.plain)
-                .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 3.5)
-                .padding(.vertical, 1.5)
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2)
                 .background(currentZone == .bottomRack ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
                 .foregroundColor(currentZone == .bottomRack ? .black : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
 
             Button(action: { engine.popOutModuleToWindow(mod) }) {
                 Image(systemName: "macwindow.badge.plus")
-                    .font(.system(size: 6.5, weight: .bold))
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1.5)
+                    .font(.system(size: 8.5, weight: .bold))
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 2)
                     .background(engine.currentTheme.accentPrimary.opacity(0.28))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -7807,7 +7811,7 @@ struct ContentView: View {
                     .font(.system(size: 14))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.7))
                 Text("+ PLACE MODULE IN \(zone.displayName)")
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
             }
             .padding(.vertical, 14)
@@ -7835,9 +7839,9 @@ struct ContentView: View {
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
                 Text("POPPED OUT")
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
                     .background(engine.currentTheme.accentPrimary.opacity(0.22))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -7848,7 +7852,7 @@ struct ContentView: View {
                     .font(.system(size: 20))
                     .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.85))
                 Text("ACTIVE IN FLOATING WINDOW")
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
 
                 HStack(spacing: 6) {
@@ -7859,7 +7863,7 @@ struct ContentView: View {
                             Image(systemName: "macwindow")
                             Text("FOCUS WINDOW")
                         }
-                        .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(Color.white.opacity(0.12))
@@ -7875,7 +7879,7 @@ struct ContentView: View {
                             Image(systemName: "arrow.down.left.square.fill")
                             Text("DOCK BACK HERE")
                         }
-                        .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(engine.currentTheme.accentPrimary)
@@ -8402,11 +8406,11 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Text(hex.wrappedValue)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     .foregroundColor(engine.currentTheme.accentPrimary)
             }
             Spacer()
@@ -9864,12 +9868,12 @@ struct ContentView: View {
             SoundEffect.knobTick.play(with: engine.soundPack)
         }) {
             Text(title)
-                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2.5)
-                .background(isActive ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
-                .foregroundColor(isActive ? .black : Color(white: 0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(isActive ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                .foregroundColor(isActive ? .black : Color(white: 0.85))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
     }
@@ -9879,48 +9883,48 @@ struct ContentView: View {
         let isKey = item.kind == .key
         let isFader = item.kind == .vfader || item.kind == .hfader
 
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 5) {
             // Header Row: Checkbox, Control Identifier & Number, Live Status, Test Trigger
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 // Enabled Checkbox
                 Button(action: {
                     engine.controls[index].oscEnabled.toggle()
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Image(systemName: engine.controls[index].oscEnabled ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary : Color(white: 0.4))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary : Color(white: 0.5))
                 }
                 .buttonStyle(.plain)
 
                 // Kind Badge
                 Text(isKey ? "KEY #\(item.number)" : (isFader ? "FADER CC\(item.number)" : "KNOB CC\(item.number)"))
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary.opacity(0.18) : Color.white.opacity(0.06))
-                    .foregroundColor(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary : Color(white: 0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary.opacity(0.20) : Color.white.opacity(0.08))
+                    .foregroundColor(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary : Color(white: 0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 // Control Name / Label
                 Text(item.label)
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundColor(.white)
 
                 // Live status pill
                 if isKey {
                     if item.isPressed {
                         Text("PRESSED")
-                            .font(.system(size: 6, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
+                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
                             .background(Color.green)
                             .foregroundColor(.black)
-                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                 } else {
                     Text("\(item.liveValue)")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
 
@@ -9931,59 +9935,59 @@ struct ContentView: View {
                     engine.sendOSCForControl(index: index, isPress: true)
                     SoundEffect.keyTap.play(with: engine.soundPack)
                 }) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 3) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 6.5))
+                            .font(.system(size: 8))
                         Text("TEST")
-                            .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.12))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.14))
                     .foregroundColor(engine.currentTheme.accentPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
                 .hoverGrow(1.05)
             }
 
             // Custom Name / Alias + OSC Address
-            HStack(spacing: 5) {
-                VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("CUSTOM ALIAS:")
-                        .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.5))
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.82))
                     TextField(item.label, text: $engine.controls[index].customName)
-                        .font(.system(size: 7, design: .monospaced))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .textFieldStyle(.plain)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.45))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-                .frame(width: 80)
+                .frame(width: 95)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("OSC ADDRESS PATH:")
-                        .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.5))
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.82))
                     TextField(isKey ? "/bitchboy/key/\(index + 1)" : "/bitchboy/fader/\(max(1, index - 48))", text: $engine.controls[index].oscAddress)
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.45))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
             }
 
             // OSC Parameters (Arg Type, Values, Scaling, Release)
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 // Arg Type Picker
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("ARG TYPE:")
-                        .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.5))
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.82))
                     Picker("", selection: $engine.controls[index].oscArgType) {
                         Text("FLOAT").tag("FLOAT")
                         Text("INT").tag("INT")
@@ -9994,67 +9998,67 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .font(.system(size: 7, design: .monospaced))
-                    .frame(height: 18)
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .frame(height: 20)
                 }
-                .frame(width: 85)
+                .frame(width: 95)
 
                 if isKey {
                     // Send on Release Checkbox & Release Value
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("ON RELEASE:")
-                            .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(white: 0.5))
-                        HStack(spacing: 3) {
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(white: 0.82))
+                        HStack(spacing: 4) {
                             Button(action: {
                                 engine.controls[index].oscSendRelease.toggle()
                             }) {
                                 Image(systemName: engine.controls[index].oscSendRelease ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 8))
-                                    .foregroundColor(engine.controls[index].oscSendRelease ? .green : Color(white: 0.4))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(engine.controls[index].oscSendRelease ? .green : Color(white: 0.5))
                             }
                             .buttonStyle(.plain)
 
                             if engine.controls[index].oscSendRelease {
                                 TextField("0.0", text: $engine.controls[index].oscReleaseVal)
-                                    .font(.system(size: 7, design: .monospaced))
+                                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                                     .textFieldStyle(.plain)
-                                    .frame(width: 32)
-                                    .padding(.horizontal, 2)
-                                    .padding(.vertical, 1.5)
-                                    .background(Color.black.opacity(0.4))
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    .frame(width: 40)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2.5)
+                                    .background(Color.black.opacity(0.45))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
                             }
                         }
                     }
                 } else {
                     // Fader / Knob Min and Max Range
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("MIN VAL:")
-                            .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(white: 0.5))
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(white: 0.82))
                         TextField("0.0", value: $engine.controls[index].oscMinVal, formatter: NumberFormatter())
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                             .textFieldStyle(.plain)
-                            .frame(width: 44)
-                            .padding(.horizontal, 2)
-                            .padding(.vertical, 1.5)
-                            .background(Color.black.opacity(0.4))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .frame(width: 48)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2.5)
+                            .background(Color.black.opacity(0.45))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                     }
 
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("MAX VAL:")
-                            .font(.system(size: 5.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(white: 0.5))
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(white: 0.82))
                         TextField("1.0", value: $engine.controls[index].oscMaxVal, formatter: NumberFormatter())
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                             .textFieldStyle(.plain)
-                            .frame(width: 44)
-                            .padding(.horizontal, 2)
-                            .padding(.vertical, 1.5)
-                            .background(Color.black.opacity(0.4))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .frame(width: 48)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2.5)
+                            .background(Color.black.opacity(0.45))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                     }
                 }
 
@@ -10977,15 +10981,15 @@ struct ContentView: View {
                         Button(action: {
                             engine.customBrushVelocity = item.1
                         }) {
-                            HStack(spacing: 2) {
+                            HStack(spacing: 3) {
                                 Circle()
-                                    .fill(item.1 == 0 ? Color(white: 0.25) : ledColor(item.1))
-                                    .frame(width: 6, height: 6)
+                                    .fill(item.1 == 0 ? Color(white: 0.35) : ledColor(item.1))
+                                    .frame(width: 7, height: 7)
                                 Text(item.0)
-                                    .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 3)
+                            .padding(.vertical, 4)
                             .background(isSel ? Color.white.opacity(0.24) : Color.black.opacity(0.45))
                             .foregroundColor(.white)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -11433,10 +11437,10 @@ struct ContentView: View {
                     }) {
                         VStack(spacing: 3) {
                             Image(systemName: mode.icon)
-                                .font(.system(size: 10.5, weight: .bold))
+                                .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(isSel ? .black : activeColor)
                             Text(mode.rawValue)
-                                .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                                 .foregroundColor(isSel ? .black : .white)
                                 .lineLimit(1)
                         }
@@ -11564,11 +11568,11 @@ struct ContentView: View {
     private func wingTabButton(title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
                 .background(active ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                .foregroundColor(active ? .black : Color(white: 0.78))
+                .foregroundColor(active ? .black : Color(white: 0.88))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
@@ -11579,14 +11583,14 @@ struct ContentView: View {
         Button(action: { isOn.wrappedValue.toggle() }) {
             HStack(spacing: 3) {
                 Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 7.5))
+                    .font(.system(size: 9))
                 Text(label)
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
-            .background(isOn.wrappedValue ? engine.currentTheme.accentPrimary.opacity(0.22) : Color.white.opacity(0.06))
-            .foregroundColor(isOn.wrappedValue ? engine.currentTheme.accentPrimary : Color(white: 0.5))
+            .background(isOn.wrappedValue ? engine.currentTheme.accentPrimary.opacity(0.24) : Color.white.opacity(0.08))
+            .foregroundColor(isOn.wrappedValue ? engine.currentTheme.accentPrimary : Color(white: 0.78))
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
@@ -11597,10 +11601,10 @@ struct ContentView: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text(title)
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -11639,10 +11643,10 @@ struct ContentView: View {
     private func miniToolBtn(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
-                .background(Color.white.opacity(0.1))
+                .background(Color.white.opacity(0.12))
                 .foregroundColor(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
         }
@@ -12065,11 +12069,11 @@ struct ContentView: View {
                 // RX Stream Telemetry
                 HStack {
                     Text("RX STREAM:")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.5))
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.72))
                     Spacer()
                     Text(engine.lastStreamMessage)
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
             }
