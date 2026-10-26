@@ -313,6 +313,18 @@ enum SoundEffect: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    private static var soundCache: [String: NSSound] = [:]
+
+    private static func playCachedSound(_ name: String) {
+        if let sound = soundCache[name] {
+            sound.stop()
+            sound.play()
+        } else if let sound = NSSound(named: name) {
+            soundCache[name] = sound
+            sound.play()
+        }
+    }
+
     func play(with pack: SoundPack) {
         guard pack != .mute else { return }
 
@@ -327,48 +339,48 @@ enum SoundEffect: String, CaseIterable, Codable, Identifiable {
         switch pack {
         case .arcade8Bit, .customUser:
             switch self {
-            case .keyTap: NSSound(named: "Tink")?.play()
-            case .faderSlide: NSSound(named: "Pop")?.play()
-            case .knobTick: NSSound(named: "Morse")?.play()
-            case .mascotSqueak: NSSound(named: "Purr")?.play()
-            case .presetSwitch: NSSound(named: "Glass")?.play()
+            case .keyTap: Self.playCachedSound("Tink")
+            case .faderSlide: Self.playCachedSound("Pop")
+            case .knobTick: Self.playCachedSound("Morse")
+            case .mascotSqueak: Self.playCachedSound("Purr")
+            case .presetSwitch: Self.playCachedSound("Glass")
             case .hardwareConnected:
-                NSSound(named: "Glass")?.play()
+                Self.playCachedSound("Glass")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                    NSSound(named: "Hero")?.play()
+                    Self.playCachedSound("Hero")
                 }
             case .hardwareDisconnected:
-                NSSound(named: "Basso")?.play()
+                Self.playCachedSound("Basso")
             }
         case .mechanicalClick:
             switch self {
-            case .keyTap: NSSound(named: "Pop")?.play()
-            case .faderSlide: NSSound(named: "Tink")?.play()
-            case .knobTick: NSSound(named: "Tink")?.play()
-            case .mascotSqueak: NSSound(named: "Blow")?.play()
-            case .presetSwitch: NSSound(named: "Ping")?.play()
+            case .keyTap: Self.playCachedSound("Pop")
+            case .faderSlide: Self.playCachedSound("Tink")
+            case .knobTick: Self.playCachedSound("Tink")
+            case .mascotSqueak: Self.playCachedSound("Blow")
+            case .presetSwitch: Self.playCachedSound("Ping")
             case .hardwareConnected:
-                NSSound(named: "Ping")?.play()
+                Self.playCachedSound("Ping")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                    NSSound(named: "Glass")?.play()
+                    Self.playCachedSound("Glass")
                 }
             case .hardwareDisconnected:
-                NSSound(named: "Sosumi")?.play()
+                Self.playCachedSound("Sosumi")
             }
         case .sciFiBeeps:
             switch self {
-            case .keyTap: NSSound(named: "Morse")?.play()
-            case .faderSlide: NSSound(named: "Purr")?.play()
-            case .knobTick: NSSound(named: "Bottle")?.play()
-            case .mascotSqueak: NSSound(named: "Hero")?.play()
-            case .presetSwitch: NSSound(named: "Submarine")?.play()
+            case .keyTap: Self.playCachedSound("Morse")
+            case .faderSlide: Self.playCachedSound("Purr")
+            case .knobTick: Self.playCachedSound("Bottle")
+            case .mascotSqueak: Self.playCachedSound("Hero")
+            case .presetSwitch: Self.playCachedSound("Submarine")
             case .hardwareConnected:
-                NSSound(named: "Submarine")?.play()
+                Self.playCachedSound("Submarine")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                    NSSound(named: "Hero")?.play()
+                    Self.playCachedSound("Hero")
                 }
             case .hardwareDisconnected:
-                NSSound(named: "Blow")?.play()
+                Self.playCachedSound("Blow")
             }
         case .mute:
             break
@@ -1460,6 +1472,7 @@ struct PresetSlot: Codable, Identifiable {
 
 @MainActor
 final class BitchBoyEngine: ObservableObject {
+    private var lastStreamUpdateTime: Double = 0
     @Published var controls: [ControlItem] = []
     @Published var selectedIndex: Int = 0
     @Published var selectedIndices: Set<Int> = []
@@ -3905,7 +3918,11 @@ final class BitchBoyEngine: ObservableObject {
             }
         } else if isCC {
             controls[idx].liveValue = data2
-            lastStreamMessage = "[\(controls[idx].label)] CC #\(data1) VAL:\(data2)"
+            let now = CACurrentMediaTime()
+            if now - lastStreamUpdateTime > 0.04 {
+                lastStreamMessage = "[\(controls[idx].label)] CC #\(data1) VAL:\(data2)"
+                lastStreamUpdateTime = now
+            }
             if currentFXMode == .vuMeter && idx >= 49 && idx < 57 {
                 updateVUMeterFaders()
             }
@@ -5537,29 +5554,58 @@ final class BitchBoyEngine: ObservableObject {
         }
     }
 
+    // MARK: - Native Sub-Millisecond QWERTY Keystroke Dispatch (CoreGraphics)
     func triggerSingleQwerty(key: String, cmd: Bool, shift: Bool, alt: Bool, ctrl: Bool) {
-        let keyMap: [String: Int] = [
-            "space": 49, "return": 36, "enter": 76, "escape": 53, "esc": 53,
-            "tab": 48, "delete": 51, "up": 126, "down": 125, "left": 123, "right": 124,
-            "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
-            "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111
-        ]
-        var mods: [String] = []
-        if cmd { mods.append("command down") }
-        if shift { mods.append("shift down") }
-        if alt { mods.append("option down") }
-        if ctrl { mods.append("control down") }
-        let modClause = mods.isEmpty ? "" : " using {\(mods.joined(separator: ", "))}"
+        let cleanKey = key.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !cleanKey.isEmpty else { return }
 
-        let k = key.lowercased().trimmingCharacters(in: .whitespaces)
-        let script = (keyMap[k] != nil)
-            ? "tell application \"System Events\" to key code \(keyMap[k]!)\(modClause)"
-            : "tell application \"System Events\" to keystroke \"\(k)\"\(modClause)"
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-e", script]
-        try? task.run()
-        log("⌨️ Fired QWERTY: \(k.uppercased())")
+        // Virtual keycodes from <Carbon/HIToolbox/Events.h>
+        let keyCodes: [String: CGKeyCode] = [
+            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+            "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
+            "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28,
+            "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38,
+            "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46, ".": 47,
+            "tab": 48, "space": 49, "`": 50, "delete": 51, "backspace": 51, "enter": 36, "return": 36,
+            "escape": 53, "esc": 53,
+            "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+            "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+            "left": 123, "right": 124, "down": 125, "up": 126
+        ]
+
+        var flags = CGEventFlags()
+        if cmd { flags.insert(.maskCommand) }
+        if shift { flags.insert(.maskShift) }
+        if alt { flags.insert(.maskAlternate) }
+        if ctrl { flags.insert(.maskControl) }
+
+        let src = CGEventSource(stateID: .hidSystemState)
+
+        if let code = keyCodes[cleanKey] {
+            if let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true) {
+                down.flags = flags
+                down.post(tap: .cghidEventTap)
+            }
+            if let up = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) {
+                up.flags = flags
+                up.post(tap: .cghidEventTap)
+            }
+            log("⌨️ Native QWERTY Fired: \(cleanKey.uppercased())")
+            return
+        }
+
+        // Direct Unicode string fallback for any other character
+        let utf16Chars = Array(cleanKey.utf16)
+        if let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
+            down.flags = flags
+            down.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: utf16Chars)
+            down.post(tap: .cghidEventTap)
+        }
+        if let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
+            up.flags = flags
+            up.post(tap: .cghidEventTap)
+        }
+        log("⌨️ Native QWERTY Unicode Fired: \(cleanKey)")
     }
 
     func sendOSC(host: String, port: UInt16, address: String) {
@@ -5803,7 +5849,7 @@ struct BitchBoyGlowingLogoView: View {
     }
 }
 
-struct HardwareKeyCap: View {
+struct HardwareKeyCap: View, Equatable {
     let item: ControlItem
     let isSelected: Bool
     let color: Color
@@ -5813,6 +5859,22 @@ struct HardwareKeyCap: View {
     @State private var isHovered = false
 
     var isLit: Bool { item.currentLED > 0 }
+
+    static func == (lhs: HardwareKeyCap, rhs: HardwareKeyCap) -> Bool {
+        return lhs.item.number == rhs.item.number &&
+               lhs.item.currentLED == rhs.item.currentLED &&
+               lhs.item.isPressed == rhs.item.isPressed &&
+               lhs.item.actionType == rhs.item.actionType &&
+               lhs.item.customName == rhs.item.customName &&
+               lhs.item.qwertySteps.first?.key == rhs.item.qwertySteps.first?.key &&
+               lhs.item.qwertySteps.first?.cmd == rhs.item.qwertySteps.first?.cmd &&
+               lhs.item.qwertySteps.first?.shift == rhs.item.qwertySteps.first?.shift &&
+               lhs.item.qwertySteps.first?.alt == rhs.item.qwertySteps.first?.alt &&
+               lhs.item.qwertySteps.first?.ctrl == rhs.item.qwertySteps.first?.ctrl &&
+               lhs.isSelected == rhs.isSelected &&
+               lhs.color == rhs.color &&
+               lhs.sectionBorder == rhs.sectionBorder
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -5839,7 +5901,7 @@ struct HardwareKeyCap: View {
                     )
                     .shadow(color: isHovered ? (isLit ? color.opacity(0.95) : Color.white.opacity(0.4)) : (isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.8) : (isLit ? color.opacity(0.6) : .clear)), radius: isHovered ? 7 : (isLit ? 6 : 2))
 
-                // Labels & Center Action Cross
+                // Labels & Center Action Cross / QWERTY Shortcut Badge
                 VStack(spacing: 0) {
                     Text(item.customName.isEmpty ? item.label : item.customName)
                         .font(.system(size: 8.5, weight: .bold, design: .monospaced))
@@ -5849,15 +5911,41 @@ struct HardwareKeyCap: View {
 
                     Spacer(minLength: 0)
 
-                    // Inset cross (+) or action badge
+                    // Center QWERTY shortcut badge or Action Icon
                     ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                            .frame(width: 14, height: 14)
+                        if item.actionType == .qwerty, let step = item.qwertySteps.first {
+                            let modPrefix = (step.cmd ? "⌘" : "") + (step.shift ? "⇧" : "") + (step.alt ? "⌥" : "") + (step.ctrl ? "⌃" : "")
+                            let keyDisp: String = {
+                                switch step.key.lowercased() {
+                                case "space": return "␣"
+                                case "return", "enter": return "↵"
+                                case "escape", "esc": return "ESC"
+                                case "tab": return "⇥"
+                                case "delete", "backspace": return "⌫"
+                                case "up": return "↑"
+                                case "down": return "↓"
+                                case "left": return "←"
+                                case "right": return "→"
+                                default: return step.key.uppercased()
+                                }
+                            }()
+                            Text(modPrefix + keyDisp)
+                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                .foregroundColor(.black)
+                                .lineLimit(1)
+                                .padding(.horizontal, 3)
+                                .padding(.vertical, 1.5)
+                                .background(Color(red: 0.98, green: 0.78, blue: 0.25))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        } else {
+                            Circle()
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                .frame(width: 14, height: 14)
 
-                        Image(systemName: actionIconName(item.actionType))
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(isLit ? .white : Color(white: 0.75))
+                            Image(systemName: actionIconName(item.actionType))
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(isLit ? .white : Color(white: 0.75))
+                        }
                     }
 
                     Spacer(minLength: 0)
@@ -5892,11 +5980,17 @@ struct HardwareKeyCap: View {
     }
 }
 
-struct HardwareVerticalFader: View {
+struct HardwareVerticalFader: View, Equatable {
     let item: ControlItem
     let isSelected: Bool
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
+
+    static func == (lhs: HardwareVerticalFader, rhs: HardwareVerticalFader) -> Bool {
+        return lhs.item.number == rhs.item.number &&
+               lhs.item.liveValue == rhs.item.liveValue &&
+               lhs.isSelected == rhs.isSelected
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -5968,11 +6062,17 @@ struct HardwareVerticalFader: View {
     }
 }
 
-struct HardwareHorizontalFader: View {
+struct HardwareHorizontalFader: View, Equatable {
     let item: ControlItem
     let isSelected: Bool
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
+
+    static func == (lhs: HardwareHorizontalFader, rhs: HardwareHorizontalFader) -> Bool {
+        return lhs.item.number == rhs.item.number &&
+               lhs.item.liveValue == rhs.item.liveValue &&
+               lhs.isSelected == rhs.isSelected
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -6044,11 +6144,17 @@ struct HardwareHorizontalFader: View {
     }
 }
 
-struct HardwareKnob: View {
+struct HardwareKnob: View, Equatable {
     let item: ControlItem
     let isSelected: Bool
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
+
+    static func == (lhs: HardwareKnob, rhs: HardwareKnob) -> Bool {
+        return lhs.item.number == rhs.item.number &&
+               lhs.item.liveValue == rhs.item.liveValue &&
+               lhs.isSelected == rhs.isSelected
+    }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -6217,6 +6323,7 @@ struct ContentView: View {
     @State private var isHoveringTitleLogo: Bool = false
     @State private var activeMemoryBank: Int = 0 // 0 = BANK 1 (A-D), 1 = BANK 2 (E-H)
     @State private var showSlotCustomizer: Bool = false
+    @State private var inspectorTab: Int = 0 // 0 = LEDs, 1 = QWERTY
     @State private var jigglePhase: Bool = false
     @State private var resizingModule: StudioModuleID? = nil
         @State private var dragInitialHeight: CGFloat = 0
@@ -6227,6 +6334,31 @@ struct ContentView: View {
 
     func isExpanded(module: StudioModuleID, isSpotlight: Bool = false) -> Bool {
         engine.isModuleExpanded(module, isSpotlight: isSpotlight || engine.spotlightModule == module || standaloneModule == module)
+    }
+
+    private func setQwertyKeyForSelection(_ key: String) {
+        let targets = engine.selectedIndices.count > 1 ? Array(engine.selectedIndices) : [engine.selectedIndex]
+        for idx in targets where engine.controls[idx].hasLED {
+            engine.controls[idx].actionType = .qwerty
+            if engine.controls[idx].qwertySteps.isEmpty {
+                engine.controls[idx].qwertySteps = [QwertyStep(key: key)]
+            } else {
+                engine.controls[idx].qwertySteps[0].key = key
+            }
+        }
+        engine.saveCurrentSlot()
+    }
+
+    private func toggleQwertyModifierForSelection(_ modify: (inout QwertyStep) -> Void) {
+        let targets = engine.selectedIndices.count > 1 ? Array(engine.selectedIndices) : [engine.selectedIndex]
+        for idx in targets where engine.controls[idx].hasLED {
+            if engine.controls[idx].qwertySteps.isEmpty {
+                engine.controls[idx].qwertySteps = [QwertyStep(key: "space")]
+            }
+            modify(&engine.controls[idx].qwertySteps[0])
+        }
+        engine.saveCurrentSlot()
+        SoundEffect.knobTick.play(with: engine.soundPack)
     }
 
     var selectedControl: ControlItem {
@@ -7527,7 +7659,7 @@ struct ContentView: View {
                         .lineLimit(1)
                 }
                 .foregroundColor(engine.currentTheme.accentPrimary)
-                .frame(width: 72, height: 19)
+                .frame(width: 64, height: 18)
                 .background(engine.currentTheme.accentPrimary.opacity(0.18))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3.5)
@@ -8719,7 +8851,7 @@ struct ContentView: View {
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         Spacer(minLength: 2)
 
@@ -9237,6 +9369,54 @@ struct ContentView: View {
                     engine.sendPanicAllNotesOffToOutputs()
                 }
             }
+
+            Text("⌨️ QUICK QWERTY KEYBOARD PROFILES")
+                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                macroTriggerPad(title: "DAW TRANSPORT", icon: "play.circle.fill") {
+                    engine.controls[0].actionType = .qwerty
+                    engine.controls[0].qwertySteps = [QwertyStep(key: "space")]
+                    engine.controls[1].actionType = .qwerty
+                    engine.controls[1].qwertySteps = [QwertyStep(key: "r")]
+                    engine.controls[2].actionType = .qwerty
+                    engine.controls[2].qwertySteps = [QwertyStep(key: "return")]
+                    engine.saveCurrentSlot()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                macroTriggerPad(title: "OBS STREAM DECK", icon: "video.fill") {
+                    let fkeys = ["f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21"]
+                    for (i, fk) in fkeys.enumerated() {
+                        let idx = 40 + i
+                        if idx < engine.controls.count {
+                            engine.controls[idx].actionType = .qwerty
+                            engine.controls[idx].qwertySteps = [QwertyStep(key: fk)]
+                        }
+                    }
+                    engine.saveCurrentSlot()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                macroTriggerPad(title: "VIDEO EDIT J/K/L", icon: "film.fill") {
+                    let keys = ["j", "k", "l", "c", "v", "b", "z"]
+                    for (i, k) in keys.enumerated() {
+                        if i < engine.controls.count {
+                            engine.controls[i].actionType = .qwerty
+                            engine.controls[i].qwertySteps = [QwertyStep(key: k)]
+                        }
+                    }
+                    engine.saveCurrentSlot()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                macroTriggerPad(title: "CLEAR ALL TO MIDI", icon: "arrow.counterclockwise") {
+                    for i in 0..<49 {
+                        engine.controls[i].actionType = .passthrough
+                        engine.controls[i].qwertySteps.removeAll()
+                    }
+                    engine.saveCurrentSlot()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+            }
         }
     }
 
@@ -9260,7 +9440,7 @@ struct ContentView: View {
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         Spacer(minLength: 2)
 
@@ -10420,11 +10600,11 @@ struct ContentView: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             if !isSpotlight {
-                // Header (Uniform across all modules)
+                // Header (Uniform across all modules - never truncates)
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "memorychip.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(activeSlotColor)
                             .shadow(color: activeSlotColor.opacity(0.8), radius: 4)
 
@@ -10432,93 +10612,59 @@ struct ContentView: View {
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
 
-                        Spacer(minLength: 2)
-
-                        HStack(spacing: 2) {
-                            Button(action: {
-                                activeMemoryBank = 0
-                                SoundEffect.knobTick.play(with: engine.soundPack)
-                            }) {
-                                Text("A–D")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 2)
-                                    .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                    .foregroundColor(activeMemoryBank == 0 ? .black : Color(white: 0.75))
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                            }
-                            .buttonStyle(.plain)
-
-                            if engine.slots.count > 4 {
-                                Button(action: {
-                                    activeMemoryBank = 1
-                                    SoundEffect.knobTick.play(with: engine.soundPack)
-                                }) {
-                                    Text("E–H")
-                                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 2)
-                                        .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                        .foregroundColor(activeMemoryBank == 1 ? .black : Color(white: 0.75))
-                                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                        Circle()
+                            .fill(activeSlotColor)
+                            .frame(width: 5, height: 5)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.memorySlots)
                     }
 
+                    Spacer(minLength: 2)
+
                     moduleHeaderControls(for: .memorySlots)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 2.5)
                 .padding(.horizontal, 4)
                 .background(Color.white.opacity(0.04))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
-            } else {
-                HStack(spacing: 6) {
-                    Text("ACTIVE PRESET BANK:")
-                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
-                        .foregroundColor(Color(white: 0.6))
+            }
 
+            // Dedicated Bank Switcher Bar (Always readable, never squished!)
+            HStack(spacing: 4) {
+                Button(action: {
+                    activeMemoryBank = 0
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("BANK A–D")
+                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3.5 * scale)
+                        .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                        .foregroundColor(activeMemoryBank == 0 ? .black : Color(white: 0.75))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+
+                if engine.slots.count > 4 {
                     Button(action: {
-                        activeMemoryBank = 0
+                        activeMemoryBank = 1
                         SoundEffect.knobTick.play(with: engine.soundPack)
                     }) {
-                        Text("BANK A–D")
+                        Text("BANK E–H")
                             .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                            .foregroundColor(activeMemoryBank == 0 ? .black : Color(white: 0.75))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 3.5 * scale)
+                            .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                            .foregroundColor(activeMemoryBank == 1 ? .black : Color(white: 0.75))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                     .buttonStyle(.plain)
-
-                    if engine.slots.count > 4 {
-                        Button(action: {
-                            activeMemoryBank = 1
-                            SoundEffect.knobTick.play(with: engine.soundPack)
-                        }) {
-                            Text("BANK E–H")
-                                .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
-                                .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                .foregroundColor(activeMemoryBank == 1 ? .black : Color(white: 0.75))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer()
                 }
-                .padding(.bottom, 2)
             }
-
             ScrollView([.vertical], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 6) {
                     // 2x2 Tactile Illuminated Memory Slot Pads (doubles in size when expanded!)
@@ -10834,7 +10980,7 @@ struct ContentView: View {
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         Spacer(minLength: 2)
 
@@ -11447,59 +11593,80 @@ struct ContentView: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             if !isSpotlight {
-                // Header (Uniform across all modules)
+                // Header (Uniform across all modules - never truncates)
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "waveform.circle.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(isEnabled ? activeColor : Color(white: 0.5))
                             .shadow(color: isEnabled ? activeColor.opacity(0.85) : .clear, radius: 4)
 
-                        Text("REACTIVE KEY FX")
+                        Text("REACTIVE FX")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
 
-                        Spacer(minLength: 2)
-
-                        Button(action: {
-                            if engine.reactiveKeyFXMode == .off {
-                                engine.reactiveKeyFXMode = .ripple
-                            } else {
-                                engine.reactiveKeyFXMode = .off
-                                engine.activeReactivePulses.removeAll()
-                                engine.restorePresetLEDs()
-                            }
-                            SoundEffect.knobTick.play(with: engine.soundPack)
-                        }) {
-                            HStack(spacing: 3) {
-                                Circle()
-                                    .fill(isEnabled ? Color.green : Color(white: 0.4))
-                                    .frame(width: 5, height: 5)
-                                    .shadow(color: isEnabled ? Color.green : .clear, radius: 3)
-                                Text(isEnabled ? "ACTIVE" : "OFF")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            }
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(isEnabled ? Color.green.opacity(0.18) : Color.white.opacity(0.08))
-                            .foregroundColor(isEnabled ? Color.green : Color(white: 0.6))
-                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
-                        }
-                        .buttonStyle(.plain)
+                        Circle()
+                            .fill(isEnabled ? Color.green : Color(white: 0.4))
+                            .frame(width: 5, height: 5)
+                            .shadow(color: isEnabled ? Color.green : .clear, radius: 3)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.reactiveKeyFX)
                     }
 
+                    Spacer(minLength: 2)
+
                     moduleHeaderControls(for: .reactiveKeyFX)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 2.5)
                 .padding(.horizontal, 4)
                 .background(Color.white.opacity(0.04))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            // Dedicated FX Status & Speed Bar (Always readable, never squished!)
+            HStack(spacing: 4) {
+                Button(action: {
+                    if engine.reactiveKeyFXMode == .off {
+                        engine.reactiveKeyFXMode = .ripple
+                    } else {
+                        engine.reactiveKeyFXMode = .off
+                        engine.activeReactivePulses.removeAll()
+                        engine.restorePresetLEDs()
+                    }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(isEnabled ? Color.green : Color(white: 0.4))
+                            .frame(width: 5, height: 5)
+                        Text(isEnabled ? "FX ACTIVE" : "FX OFF")
+                            .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                    }
+                    .padding(.horizontal, 5 * scale)
+                    .padding(.vertical, 3 * scale)
+                    .background(isEnabled ? Color.green.opacity(0.18) : Color.white.opacity(0.08))
+                    .foregroundColor(isEnabled ? Color.green : Color(white: 0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                HStack(spacing: 3) {
+                    Text("SPEED:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.7))
+                    Slider(value: $engine.reactiveFXSpeed, in: 0.4...3.0, step: 0.1)
+                        .frame(width: 50 * scale)
+                        .accentColor(activeColor)
+                    Text(String(format: "%.1fx", engine.reactiveFXSpeed))
+                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .foregroundColor(activeColor)
+                }
             }
 
             ScrollView([.vertical], showsIndicators: true) {
@@ -11538,39 +11705,45 @@ struct ContentView: View {
                         }
                     }
 
-                    // Wave Speed & Color Mode Selector (doubles in size when expanded)
+                    // Clean 2-Row PRISM & Color Palette Box (Never wraps or squishes!)
                     VStack(alignment: .leading, spacing: 4 * scale) {
-                        HStack(spacing: 6) {
-                            Text("WAVE SPEED:")
-                                .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(white: 0.7))
-                            Slider(value: $engine.reactiveFXSpeed, in: 0.4...3.0, step: 0.1)
-                                .accentColor(activeColor)
-                            Text(String(format: "%.1fx", engine.reactiveFXSpeed))
-                                .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
-                                .foregroundColor(activeColor)
-                                .frame(width: 24 * scale, alignment: .trailing)
-                        }
-
-                        HStack(spacing: 4 * scale) {
+                        HStack {
                             Button(action: {
                                 engine.reactiveFXRainbowColor = true
                                 engine.triggerRandomDemoReactiveFX()
+                                SoundEffect.knobTick.play(with: engine.soundPack)
                             }) {
-                                HStack(spacing: 2) {
+                                HStack(spacing: 3) {
                                     Text("🌈")
-                                        .font(.system(size: 7 * scale))
-                                    Text("PRISM")
-                                        .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                                        .font(.system(size: 7.5 * scale))
+                                    Text("PRISM RAINBOW")
+                                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                        .lineLimit(1)
                                 }
-                                .padding(.horizontal, 5 * scale)
-                                .padding(.vertical, 3 * scale)
+                                .padding(.horizontal, 6 * scale)
+                                .padding(.vertical, 2.5 * scale)
                                 .background(engine.reactiveFXRainbowColor ? engine.currentTheme.accentPrimary : Color.white.opacity(0.1))
                                 .foregroundColor(engine.reactiveFXRainbowColor ? .black : .white)
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
                             .buttonStyle(.plain)
+                            .fixedSize(horizontal: true, vertical: false)
 
+                            Spacer()
+
+                            if !engine.reactiveFXRainbowColor {
+                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
+                                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                                    .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
+                            } else {
+                                Text("MULTI-COLOR")
+                                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                                    .foregroundColor(engine.currentTheme.accentPrimary)
+                            }
+                        }
+
+                        // 12 Color Swatches
+                        HStack(spacing: 4 * scale) {
                             let colorSwatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 83, 3]
                             ForEach(colorSwatches, id: \.self) { vel in
                                 let isPicked = (!engine.reactiveFXRainbowColor && engine.reactiveFXColorVelocity == vel)
@@ -11586,17 +11759,14 @@ struct ContentView: View {
                                         engine.reactiveFXRainbowColor = false
                                         engine.reactiveFXColorVelocity = vel
                                         engine.triggerRandomDemoReactiveFX()
+                                        SoundEffect.knobTick.play(with: engine.soundPack)
                                     }
-                            }
-                            Spacer(minLength: 0)
-
-                            if !engine.reactiveFXRainbowColor {
-                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
-                                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
-                                    .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
                             }
                         }
                     }
+                    .padding(5 * scale)
+                    .background(Color.black.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                     .padding(5 * scale)
                     .background(Color.black.opacity(0.4))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -11764,6 +11934,7 @@ struct ContentView: View {
                                     engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                                 }
                             )
+                            .equatable()
                         }
                     }
                 }
@@ -11807,6 +11978,7 @@ struct ContentView: View {
                             engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                         }
                     )
+                    .equatable()
                 }
             }
             .padding(6)
@@ -11862,6 +12034,7 @@ struct ContentView: View {
                         onSelect: { engine.selectedIndex = idx },
                         onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                     )
+                    .equatable()
                 }
             }
             .padding(6)
@@ -11888,6 +12061,7 @@ struct ContentView: View {
                         onSelect: { engine.selectedIndex = idx },
                         onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                     )
+                    .equatable()
                 }
             }
             .padding(6)
@@ -11916,6 +12090,7 @@ struct ContentView: View {
                                 onSelect: { engine.selectedIndex = idx },
                                 onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                             )
+                            .equatable()
                         }
                     }
                 }
@@ -12027,117 +12202,366 @@ struct ContentView: View {
                 }
 
                 if selectedControl.hasLED {
-                    // Idle Velocity Slider (Batch updates all selected!)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(engine.selectedIndices.count > 1 ? "IDLE LED (BATCH):" : "IDLE LED:")
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(white: 0.7))
-                            Spacer()
-                            Circle()
-                                .fill(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
-                                .frame(width: 7, height: 7)
-                            Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].idleVelocity))
-                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                                .foregroundColor(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
+                    // Sub-Tab Switcher: LED Colors vs MIDI -> QWERTY Keyboard
+                    HStack(spacing: 3) {
+                        Button(action: {
+                            inspectorTab = 0
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            Text("💡 LED COLORS")
+                                .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 2.5)
+                                .background(inspectorTab == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                                .foregroundColor(inspectorTab == 0 ? .black : Color(white: 0.75))
+                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
                         }
-                        Slider(
-                            value: Binding(
-                                get: { Double(engine.controls[engine.selectedIndex].idleVelocity) },
-                                set: { v in
-                                    let u = UInt8(v)
-                                    let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
-                                    for idx in targets where engine.controls[idx].hasLED {
-                                        engine.controls[idx].idleVelocity = u
-                                        engine.controls[idx].currentLED = u
-                                        engine.sendNoteOn(note: engine.controls[idx].number, velocity: u)
-                                    }
-                                    engine.saveCurrentSlot()
+                        .buttonStyle(.plain)
+
+                        Button(action: {
+                            inspectorTab = 1
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            HStack(spacing: 2) {
+                                Text("⌨️ QWERTY KEY")
+                                if selectedControl.actionType == .qwerty {
+                                    Circle().fill(Color(red: 0.98, green: 0.78, blue: 0.25)).frame(width: 4, height: 4)
                                 }
-                            ),
-                            in: 0...127,
-                            step: 1
-                        )
-                        .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
+                            }
+                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 2.5)
+                            .background(inspectorTab == 1 ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
+                            .foregroundColor(inspectorTab == 1 ? .black : Color(white: 0.75))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        }
+                        .buttonStyle(.plain)
                     }
 
-                    // Pressed Velocity Slider (Batch updates all selected!)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(engine.selectedIndices.count > 1 ? "PRESSED LED (BATCH):" : "PRESSED LED:")
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(white: 0.7))
-                            Spacer()
-                            Circle()
-                                .fill(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
-                                .frame(width: 7, height: 7)
-                            Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].activeVelocity))
-                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                                .foregroundColor(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
-                        }
-                        Slider(
-                            value: Binding(
-                                get: { Double(engine.controls[engine.selectedIndex].activeVelocity) },
-                                set: { v in
-                                    let u = UInt8(v)
-                                    let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
-                                    for idx in targets where engine.controls[idx].hasLED {
-                                        engine.controls[idx].activeVelocity = u
-                                    }
-                                    engine.saveCurrentSlot()
-                                }
-                            ),
-                            in: 0...127,
-                            step: 1
-                        )
-                        .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
-                    }
-
-                    // 13 Authentic Hardware Color Quick Pick Bar
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("QUICK COLOR PALETTE:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(white: 0.55))
-                        HStack(spacing: 3) {
-                            let quickColors: [UInt8] = [0, 3, 33, 41, 61, 67, 72, 74, 78, 83, 87, 95, 96]
-                            ForEach(quickColors, id: \.self) { vel in
+                    if inspectorTab == 0 {
+                        // TAB 1: LED VELOCITIES & PALETTE
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(engine.selectedIndices.count > 1 ? "IDLE LED (BATCH):" : "IDLE LED:")
+                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.7))
+                                Spacer()
                                 Circle()
-                                    .fill(ledColor(vel))
-                                    .frame(width: 12, height: 12)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: engine.controls[engine.selectedIndex].activeVelocity == vel ? 1.5 : 0)
-                                    )
-                                    .shadow(color: engine.controls[engine.selectedIndex].activeVelocity == vel ? ledColor(vel) : .clear, radius: 2)
-                                    .onTapGesture {
+                                    .fill(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
+                                    .frame(width: 7, height: 7)
+                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].idleVelocity))
+                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
+                            }
+                            Slider(
+                                value: Binding(
+                                    get: { Double(engine.controls[engine.selectedIndex].idleVelocity) },
+                                    set: { v in
+                                        let u = UInt8(v)
                                         let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
                                         for idx in targets where engine.controls[idx].hasLED {
-                                            engine.controls[idx].activeVelocity = vel
+                                            engine.controls[idx].idleVelocity = u
+                                            engine.controls[idx].currentLED = u
+                                            engine.sendNoteOn(note: engine.controls[idx].number, velocity: u)
                                         }
                                         engine.saveCurrentSlot()
-                                        SoundEffect.knobTick.play(with: engine.soundPack)
                                     }
+                                ),
+                                in: 0...127,
+                                step: 1
+                            )
+                            .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
+                        }
+
+                        // Pressed Velocity Slider
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(engine.selectedIndices.count > 1 ? "PRESSED LED (BATCH):" : "PRESSED LED:")
+                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.7))
+                                Spacer()
+                                Circle()
+                                    .fill(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
+                                    .frame(width: 7, height: 7)
+                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].activeVelocity))
+                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
+                            }
+                            Slider(
+                                value: Binding(
+                                    get: { Double(engine.controls[engine.selectedIndex].activeVelocity) },
+                                    set: { v in
+                                        let u = UInt8(v)
+                                        let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
+                                        for idx in targets where engine.controls[idx].hasLED {
+                                            engine.controls[idx].activeVelocity = u
+                                        }
+                                        engine.saveCurrentSlot()
+                                    }
+                                ),
+                                in: 0...127,
+                                step: 1
+                            )
+                            .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
+                        }
+
+                        // 13 Hardware Colors
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("QUICK COLOR PALETTE:")
+                                .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(white: 0.55))
+                            HStack(spacing: 3) {
+                                let quickColors: [UInt8] = [0, 3, 33, 41, 61, 67, 72, 74, 78, 83, 87, 95, 96]
+                                ForEach(quickColors, id: \.self) { vel in
+                                    Circle()
+                                        .fill(ledColor(vel))
+                                        .frame(width: 12, height: 12)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white, lineWidth: engine.controls[engine.selectedIndex].activeVelocity == vel ? 1.5 : 0)
+                                        )
+                                        .shadow(color: engine.controls[engine.selectedIndex].activeVelocity == vel ? ledColor(vel) : .clear, radius: 2)
+                                        .onTapGesture {
+                                            let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
+                                            for idx in targets where engine.controls[idx].hasLED {
+                                                engine.controls[idx].activeVelocity = vel
+                                            }
+                                            engine.saveCurrentSlot()
+                                            SoundEffect.knobTick.play(with: engine.soundPack)
+                                        }
+                                }
                             }
                         }
-                    }
-                    .padding(.top, 1)
+                        .padding(.top, 1)
 
-                    // Large Fill Buttons
-                    HStack(spacing: 4) {
-                        Button("FILL 8x4") { engine.setZoneLEDs(range: 0..<32, velocity: selectedControl.idleVelocity) }
-                        Button("FILL 1x8") { engine.setZoneLEDs(range: 32..<40, velocity: selectedControl.idleVelocity) }
-                        Button("FILL 3x3") { engine.setZoneLEDs(range: 40..<49, velocity: selectedControl.idleVelocity) }
-                        Button("ALL 49") { engine.setZoneLEDs(range: 0..<49, velocity: selectedControl.idleVelocity) }
+                        // Large Fill Buttons
+                        HStack(spacing: 4) {
+                            Button("FILL 8x4") { engine.setZoneLEDs(range: 0..<32, velocity: selectedControl.idleVelocity) }
+                            Button("FILL 1x8") { engine.setZoneLEDs(range: 32..<40, velocity: selectedControl.idleVelocity) }
+                            Button("FILL 3x3") { engine.setZoneLEDs(range: 40..<49, velocity: selectedControl.idleVelocity) }
+                            Button("ALL 49") { engine.setZoneLEDs(range: 0..<49, velocity: selectedControl.idleVelocity) }
+                        }
+                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain)
+                        .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    } else {
+                        // TAB 2: MIDI -> QWERTY KEYBOARD MAPPING
+                        VStack(alignment: .leading, spacing: 4) {
+                            // Mode Toggle: MIDI Only vs QWERTY Active
+                            HStack {
+                                Text("KEY MODE:")
+                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.6))
+
+                                Spacer()
+
+                                Button(action: {
+                                    let targets = engine.selectedIndices.count > 1 ? Array(engine.selectedIndices) : [engine.selectedIndex]
+                                    let newType: ActionType = (engine.controls[engine.selectedIndex].actionType == .qwerty) ? .passthrough : .qwerty
+                                    for idx in targets where engine.controls[idx].hasLED {
+                                        engine.controls[idx].actionType = newType
+                                        if newType == .qwerty && engine.controls[idx].qwertySteps.isEmpty {
+                                            engine.controls[idx].qwertySteps = [QwertyStep(key: "space")]
+                                        }
+                                    }
+                                    engine.saveCurrentSlot()
+                                    SoundEffect.knobTick.play(with: engine.soundPack)
+                                }) {
+                                    HStack(spacing: 3) {
+                                        Circle()
+                                            .fill(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color(white: 0.4))
+                                            .frame(width: 5, height: 5)
+                                        Text(engine.controls[engine.selectedIndex].actionType == .qwerty ? "QWERTY ACTIVE" : "MIDI PASS-THRU")
+                                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                                    }
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2.5)
+                                    .background(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25).opacity(0.2) : Color.white.opacity(0.08))
+                                    .foregroundColor(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color(white: 0.6))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            if engine.controls[engine.selectedIndex].actionType == .qwerty {
+                                let curStep = engine.controls[engine.selectedIndex].qwertySteps.first ?? QwertyStep(key: "space")
+                                let curKey = curStep.key
+
+                                // Key Picker & Live Test
+                                HStack(spacing: 4) {
+                                    Text("KEY:")
+                                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.6))
+
+                                    // Quick Pick Menu
+                                    Menu {
+                                        Section("COMMON KEYS") {
+                                            ForEach(["space", "return", "escape", "tab", "delete", "up", "down", "left", "right"], id: \.self) { k in
+                                                Button(k.uppercased()) {
+                                                    setQwertyKeyForSelection(k)
+                                                }
+                                            }
+                                        }
+                                        Section("FUNCTION KEYS") {
+                                            ForEach(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"], id: \.self) { k in
+                                                Button(k.uppercased()) {
+                                                    setQwertyKeyForSelection(k)
+                                                }
+                                            }
+                                        }
+                                        Section("LETTERS (A–Z)") {
+                                            ForEach(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"], id: \.self) { k in
+                                                Button(k.uppercased()) {
+                                                    setQwertyKeyForSelection(k)
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 2) {
+                                            Text(curKey.uppercased())
+                                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                                .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
+                                            Image(systemName: "chevron.up.chevron.down")
+                                                .font(.system(size: 5.5))
+                                                .foregroundColor(Color(white: 0.6))
+                                        }
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2.5)
+                                        .background(Color.black.opacity(0.6))
+                                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                    }
+                                    .menuStyle(.borderlessButton)
+
+                                    // Custom input field
+                                    TextField("Key", text: Binding(
+                                        get: { engine.controls[engine.selectedIndex].qwertySteps.first?.key ?? "" },
+                                        set: { val in
+                                            let clean = val.lowercased().trimmingCharacters(in: .whitespaces)
+                                            setQwertyKeyForSelection(clean)
+                                        }
+                                    ))
+                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .textFieldStyle(.plain)
+                                    .frame(width: 44)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color.black.opacity(0.6))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                                    Spacer()
+
+                                    // Direct sub-millisecond CGEvent Test Button
+                                    Button(action: {
+                                        if let step = engine.controls[engine.selectedIndex].qwertySteps.first {
+                                            engine.triggerSingleQwerty(key: step.key, cmd: step.cmd, shift: step.shift, alt: step.alt, ctrl: step.ctrl)
+                                        }
+                                    }) {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: "play.fill")
+                                                .font(.system(size: 6))
+                                            Text("TEST")
+                                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                        }
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2.5)
+                                        .background(Color.green.opacity(0.2))
+                                        .foregroundColor(.green)
+                                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                // Modifiers Row
+                                HStack(spacing: 3) {
+                                    Text("MODS:")
+                                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.6))
+                                    Button(action: { toggleQwertyModifierForSelection { $0.cmd.toggle() } }) {
+                                        Text("⌘ CMD")
+                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2)
+                                            .background(curStep.cmd ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
+                                            .foregroundColor(curStep.cmd ? .black : Color(white: 0.75))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(action: { toggleQwertyModifierForSelection { $0.shift.toggle() } }) {
+                                        Text("⇧ SHIFT")
+                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2)
+                                            .background(curStep.shift ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
+                                            .foregroundColor(curStep.shift ? .black : Color(white: 0.75))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(action: { toggleQwertyModifierForSelection { $0.alt.toggle() } }) {
+                                        Text("⌥ OPT")
+                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2)
+                                            .background(curStep.alt ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
+                                            .foregroundColor(curStep.alt ? .black : Color(white: 0.75))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(action: { toggleQwertyModifierForSelection { $0.ctrl.toggle() } }) {
+                                        Text("⌃ CTRL")
+                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2)
+                                            .background(curStep.ctrl ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
+                                            .foregroundColor(curStep.ctrl ? .black : Color(white: 0.75))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                // Quick Shortcut Templates Row
+                                HStack(spacing: 3) {
+                                    Button("SPACE") { setQwertyKeyForSelection("space") }
+                                    Button("RETURN") { setQwertyKeyForSelection("return") }
+                                    Button("ESC") { setQwertyKeyForSelection("escape") }
+                                    Button("⌘C") {
+                                        setQwertyKeyForSelection("c")
+                                        toggleQwertyModifierForSelection { $0.cmd = true }
+                                    }
+                                    Button("⌘V") {
+                                        setQwertyKeyForSelection("v")
+                                        toggleQwertyModifierForSelection { $0.cmd = true }
+                                    }
+                                    Button("⌘Z") {
+                                        setQwertyKeyForSelection("z")
+                                        toggleQwertyModifierForSelection { $0.cmd = true }
+                                    }
+                                }
+                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                                .buttonStyle(.plain)
+                                .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.4))
+                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                            } else {
+                                Text("Key acts as standard physical MIDI Note On / Off message.")
+                                    .font(.system(size: 7.2, weight: .medium, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.6))
+                                    .padding(.vertical, 6)
+                            }
+                        }
+                        .padding(5)
+                        .background(Color.white.opacity(0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                    .buttonStyle(.plain)
-                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.4))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                } else {
-                    Text("ANALOG CC VALUE: \(selectedControl.liveValue)")
+                } else {                    Text("ANALOG CC VALUE: \(selectedControl.liveValue)")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
                         .padding(.vertical, 10)
@@ -12209,6 +12633,7 @@ struct ContentView: View {
                                     engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                                 }
                             )
+                            .equatable()
                         }
                     }
                 }
