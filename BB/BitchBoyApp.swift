@@ -176,13 +176,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
     }
 
     var defaultSlotHeight: CGFloat {
-        switch self {
-        case .midiRouter: return 340
-        case .memorySlots: return 240
-        case .customFXStudio: return 340
-        case .reactiveKeyFX: return 220
-        case .showControl: return 340
-        }
+        return 210
     }
 }
 
@@ -4859,10 +4853,8 @@ final class BitchBoyEngine: ObservableObject {
             nextH = 340
         } else if currentH < 380 {
             nextH = 480
-        } else if currentH < 520 {
-            nextH = 210
         } else {
-            nextH = 340
+            nextH = 210
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             moduleCustomHeights[module] = nextH
@@ -4872,10 +4864,20 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func moduleSizePresetLabel(_ module: StudioModuleID) -> String {
-        guard let h = moduleCustomHeights[module] else { return "AUTO" }
-        if h <= 230 { return "COMPACT" }
-        if h <= 360 { return "STD" }
-        return "TALL"
+        let h = moduleCustomHeights[module] ?? module.defaultSlotHeight
+        if h <= 235 { return "COMPACT" }
+        if h <= 375 { return "STANDARD" }
+        return "EXPANDED"
+    }
+
+    func isModuleExpanded(_ module: StudioModuleID, isSpotlight: Bool = false) -> Bool {
+        if isSpotlight { return true }
+        let h = moduleCustomHeights[module] ?? module.defaultSlotHeight
+        return h >= 375
+    }
+
+    func moduleTextScale(_ module: StudioModuleID, isSpotlight: Bool = false) -> CGFloat {
+        return isModuleExpanded(module, isSpotlight: isSpotlight) ? 2.0 : 1.0
     }
 
     func toggleSpotlightModule(_ module: StudioModuleID) {
@@ -6217,7 +6219,15 @@ struct ContentView: View {
     @State private var showSlotCustomizer: Bool = false
     @State private var jigglePhase: Bool = false
     @State private var resizingModule: StudioModuleID? = nil
-    @State private var dragInitialHeight: CGFloat = 0
+        @State private var dragInitialHeight: CGFloat = 0
+
+    func currentScale(for module: StudioModuleID, isSpotlight: Bool = false) -> CGFloat {
+        engine.moduleTextScale(module, isSpotlight: isSpotlight || engine.spotlightModule == module || standaloneModule == module)
+    }
+
+    func isExpanded(module: StudioModuleID, isSpotlight: Bool = false) -> Bool {
+        engine.isModuleExpanded(module, isSpotlight: isSpotlight || engine.spotlightModule == module || standaloneModule == module)
+    }
 
     var selectedControl: ControlItem {
         if engine.selectedIndex < engine.controls.count {
@@ -7505,46 +7515,58 @@ struct ContentView: View {
 
     private func moduleHeaderControls(for module: StudioModuleID) -> some View {
         HStack(spacing: 3) {
-            // Dynamic Size Preset Quick-Cycle Button
+            // Dynamic Size Preset Quick-Cycle Button (Uniform 72x19 box in every module)
             Button(action: {
                 engine.cycleModuleSizePreset(module)
             }) {
-                HStack(spacing: 2) {
+                HStack(spacing: 2.5) {
                     Image(systemName: "arrow.up.and.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 7.5, weight: .bold))
                     Text(engine.moduleSizePresetLabel(module))
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                        .lineLimit(1)
                 }
                 .foregroundColor(engine.currentTheme.accentPrimary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
+                .frame(width: 72, height: 19)
                 .background(engine.currentTheme.accentPrimary.opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3.5)
+                        .stroke(engine.currentTheme.accentPrimary.opacity(0.4), lineWidth: 0.8)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
             .buttonStyle(.plain)
             .hoverGrow(1.08)
-            .help("Cycle Height: Compact (210) / Standard (340) / Tall (480)")
+            .help("Cycle Height: Compact (210) / Standard (340) / Expanded (480)")
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(2)
 
             // Width Preset Quick-Cycle Button (For Bottom Rack)
             if engine.currentZone(of: module) == .bottomRack {
                 Button(action: {
                     engine.cycleModuleWidthPreset(module)
                 }) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 2.5) {
                         Image(systemName: "arrow.left.and.right")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
                         Text(engine.moduleWidthPresetLabel(module))
-                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                            .lineLimit(1)
                     }
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
+                    .frame(width: 58, height: 19)
                     .background(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.18))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .stroke(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.4), lineWidth: 0.8)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 3.5))
                 }
                 .buttonStyle(.plain)
                 .hoverGrow(1.08)
                 .help("Cycle Width in Rack: Compact / Half / Wide / Full Console")
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
             }
 
             // Placement Menu Button (Move anywhere there is space!)
@@ -7578,7 +7600,7 @@ struct ContentView: View {
                 Section("HEIGHT PRESETS") {
                     Button("Compact (210 px)") { engine.setModuleHeight(module, height: 210, save: true) }
                     Button("Standard (340 px)") { engine.setModuleHeight(module, height: 340, save: true) }
-                    Button("Tall (480 px)") { engine.setModuleHeight(module, height: 480, save: true) }
+                    Button("Expanded (480 px)") { engine.setModuleHeight(module, height: 480, save: true) }
                     Button("Reset to Default") { engine.resetModuleHeight(module) }
                 }
                 if engine.currentZone(of: module) == .bottomRack {
@@ -7591,30 +7613,34 @@ struct ContentView: View {
                 }
             } label: {
                 Image(systemName: "square.split.bottomrightquarter")
-                    .font(.system(size: 7.5, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundColor(Color(white: 0.85))
-                    .frame(width: 16, height: 16)
+                    .frame(width: 17, height: 19)
                     .background(Color.white.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
             .menuStyle(.borderlessButton)
             .hoverGrow(1.08)
             .help("Move or Resize Module")
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(2)
 
             // Center Spotlight / Blur Background Toggle
             Button(action: {
                 engine.toggleSpotlightModule(module)
             }) {
                 Image(systemName: engine.spotlightModule == module ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 7.5, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundColor(engine.spotlightModule == module ? .black : engine.currentTheme.accentPrimary)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 17, height: 19)
                     .background(engine.spotlightModule == module ? engine.currentTheme.accentPrimary : Color.white.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
             .buttonStyle(.plain)
             .hoverGrow(1.08)
             .help("Center Module on Screen with Blurred Background")
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(2)
 
             // Pop Out Into Standalone Floating Window
             if standaloneModule == nil {
@@ -7622,17 +7648,21 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(module)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 7.5, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundColor(Color(white: 0.85))
-                        .frame(width: 16, height: 16)
+                        .frame(width: 17, height: 19)
                         .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
                 }
                 .buttonStyle(.plain)
                 .hoverGrow(1.08)
                 .help("Pop Out Module Into Its Own Window")
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(2)
     }
 
     private func dynamicModuleContainer(for mod: StudioModuleID, in zone: ModuleZone) -> some View {
@@ -8674,24 +8704,37 @@ struct ContentView: View {
     // LEFT WING (RED BOX #1): MIDI INPUT -> ANY PROGRAM / OUTPUT ROUTER & SCOPE
     // ------------------------------------------------------------------------
     private func leftWingStudioPanel(isSpotlight: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let scale: CGFloat = currentScale(for: .midiRouter, isSpotlight: isSpotlight)
+
+        return VStack(alignment: .leading, spacing: 8) {
             if !isSpotlight {
-                // Wing Header & Mode Switcher (CLICK TOP BAR TO CENTER ON SCREEN & BLUR BACKGROUND!)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                // Header (Uniform across all modules)
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "point.3.filled.connected.trianglepath.dotted")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
-                        Text("MIDI ROUTER // OUT")
+
+                        Text("MIDI ROUTER")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
                         Spacer(minLength: 2)
-                        Circle()
-                            .fill(engine.midiThruEnabled ? Color.green : Color.orange)
-                            .frame(width: 6, height: 6)
-                        Text(engine.midiThruEnabled ? "THRU ON" : "MUTED")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .foregroundColor(engine.midiThruEnabled ? Color.green : Color.orange)
+
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(engine.midiThruEnabled ? Color.green : Color.orange)
+                                .frame(width: 5, height: 5)
+                            Text(engine.midiThruEnabled ? "THRU ON" : "MUTED")
+                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                .foregroundColor(engine.midiThruEnabled ? Color.green : Color.orange)
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -8708,13 +8751,13 @@ struct ContentView: View {
 
             // Left Wing Tabs: ROUTER, SCOPE, MACROS
             HStack(spacing: 3) {
-                wingTabButton(title: "ROUTER", active: engine.leftWingTab == "ROUTER" || engine.leftWingTab == "SHOWCONTROL") {
+                wingTabButton(title: "ROUTER", active: engine.leftWingTab == "ROUTER" || engine.leftWingTab == "SHOWCONTROL", scale: scale) {
                     engine.leftWingTab = "ROUTER"
                 }
-                wingTabButton(title: "SCOPE", active: engine.leftWingTab == "TELEMETRY") {
+                wingTabButton(title: "SCOPE", active: engine.leftWingTab == "TELEMETRY", scale: scale) {
                     engine.leftWingTab = "TELEMETRY"
                 }
-                wingTabButton(title: "MACROS", active: engine.leftWingTab == "MACROS") {
+                wingTabButton(title: "MACROS", active: engine.leftWingTab == "MACROS", scale: scale) {
                     engine.leftWingTab = "MACROS"
                 }
             }
@@ -9202,24 +9245,37 @@ struct ContentView: View {
     // Control external show software (QLab, Resolume, grandMA, ETC EOS, TouchDesigner)
     // ------------------------------------------------------------------------
     private func showControlStudioPanel(isSpotlight: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let scale: CGFloat = currentScale(for: .showControl, isSpotlight: isSpotlight)
+
+        return VStack(alignment: .leading, spacing: 7) {
             if !isSpotlight {
-                // Header (CLICK TOP BAR TO CENTER ON SCREEN & BLUR BACKGROUND!)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
+                // Header (Uniform across all modules)
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
                         Image(systemName: "dot.radiowaves.left.and.right")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
-                        Text("SHOW CONTROL // OSC STUDIO")
+
+                        Text("SHOW CONTROL")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
                         Spacer(minLength: 2)
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                        Text("LIVE")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .foregroundColor(Color.green)
+
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 5, height: 5)
+                            Text("LIVE")
+                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color.green)
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.18))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -9236,10 +9292,10 @@ struct ContentView: View {
 
             // Sub-Tab Switcher: OSC STUDIO & HARDWARE FEEDBACK
             HStack(spacing: 3) {
-                wingTabButton(title: "OSC STUDIO", active: engine.showControlSubTab != "FEEDBACK") {
+                wingTabButton(title: "OSC STUDIO", active: engine.showControlSubTab != "FEEDBACK", scale: scale) {
                     engine.showControlSubTab = "OSC"
                 }
-                wingTabButton(title: "FEEDBACK", active: engine.showControlSubTab == "FEEDBACK") {
+                wingTabButton(title: "FEEDBACK", active: engine.showControlSubTab == "FEEDBACK", scale: scale) {
                     engine.showControlSubTab = "FEEDBACK"
                 }
             }
@@ -10359,56 +10415,62 @@ struct ContentView: View {
         let bankRange: Range<Int> = activeMemoryBank == 0 ? (0..<min(4, engine.slots.count)) : (min(4, engine.slots.count)..<min(8, engine.slots.count))
         let activeIdx = min(max(0, engine.activeSlot), max(0, engine.slots.count - 1))
         let activeSlotColor = engine.slots.indices.contains(activeIdx) ? ledColor(engine.slots[activeIdx].accentVelocity) : engine.currentTheme.accentPrimary
+        let scale: CGFloat = currentScale(for: .memorySlots, isSpotlight: isSpotlight)
+        let isExp = isExpanded(module: .memorySlots, isSpotlight: isSpotlight)
 
         return VStack(alignment: .leading, spacing: 6) {
             if !isSpotlight {
-                // Header & Bank A-D / E-H Switcher (CLICK TOP BAR TO CENTER ON SCREEN & BLUR BACKGROUND!)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
+                // Header (Uniform across all modules)
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
                         Image(systemName: "memorychip.fill")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(activeSlotColor)
                             .shadow(color: activeSlotColor.opacity(0.8), radius: 4)
-                        Text("MEMORY SLOTS // BANK")
+
+                        Text("MEMORY SLOTS")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
                         Spacer(minLength: 2)
+
+                        HStack(spacing: 2) {
+                            Button(action: {
+                                activeMemoryBank = 0
+                                SoundEffect.knobTick.play(with: engine.soundPack)
+                            }) {
+                                Text("A–D")
+                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                                    .foregroundColor(activeMemoryBank == 0 ? .black : Color(white: 0.75))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                            }
+                            .buttonStyle(.plain)
+
+                            if engine.slots.count > 4 {
+                                Button(action: {
+                                    activeMemoryBank = 1
+                                    SoundEffect.knobTick.play(with: engine.soundPack)
+                                }) {
+                                    Text("E–H")
+                                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                                        .foregroundColor(activeMemoryBank == 1 ? .black : Color(white: 0.75))
+                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.memorySlots)
-                    }
-
-                    HStack(spacing: 3) {
-                        Button(action: {
-                            activeMemoryBank = 0
-                            SoundEffect.knobTick.play(with: engine.soundPack)
-                        }) {
-                            Text("A–D")
-                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2.5)
-                                .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                .foregroundColor(activeMemoryBank == 0 ? .black : Color(white: 0.75))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-                        .buttonStyle(.plain)
-
-                        if engine.slots.count > 4 {
-                            Button(action: {
-                                activeMemoryBank = 1
-                                SoundEffect.knobTick.play(with: engine.soundPack)
-                            }) {
-                                Text("E–H")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2.5)
-                                    .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                    .foregroundColor(activeMemoryBank == 1 ? .black : Color(white: 0.75))
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
 
                     moduleHeaderControls(for: .memorySlots)
@@ -10420,7 +10482,7 @@ struct ContentView: View {
             } else {
                 HStack(spacing: 6) {
                     Text("ACTIVE PRESET BANK:")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
 
                     Button(action: {
@@ -10428,7 +10490,7 @@ struct ContentView: View {
                         SoundEffect.knobTick.play(with: engine.soundPack)
                     }) {
                         Text("BANK A–D")
-                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3.5)
                             .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -10443,7 +10505,7 @@ struct ContentView: View {
                             SoundEffect.knobTick.play(with: engine.soundPack)
                         }) {
                             Text("BANK E–H")
-                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3.5)
                                 .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -10459,8 +10521,8 @@ struct ContentView: View {
 
             ScrollView([.vertical], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 6) {
-                    // 2x2 Tactile Illuminated Memory Slot Pads
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                    // 2x2 Tactile Illuminated Memory Slot Pads (doubles in size when expanded!)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 6 * scale), GridItem(.flexible(), spacing: 6 * scale)], spacing: 6 * scale) {
                 ForEach(Array(bankRange), id: \.self) { idx in
                     let slot = engine.slots[idx]
                     let isSelected = (engine.activeSlot == idx)
@@ -10475,47 +10537,48 @@ struct ContentView: View {
                     Button(action: {
                         engine.selectSlot(idx)
                     }) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3 * scale) {
+                            HStack(spacing: 4 * scale) {
                                 Text("SLOT \(slotLetters[idx % 8])")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                    .padding(.horizontal, 4.5)
-                                    .padding(.vertical, 1.5)
+                                    .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 4.5 * scale)
+                                    .padding(.vertical, 1.5 * scale)
                                     .background(isSelected ? slotAccent : Color.white.opacity(0.12))
                                     .foregroundColor(isSelected ? .black : slotAccent)
                                     .clipShape(RoundedRectangle(cornerRadius: 3))
 
                                 Image(systemName: slot.iconName)
-                                    .font(.system(size: 8.5, weight: .bold))
+                                    .font(.system(size: 8.5 * scale, weight: .bold))
                                     .foregroundColor(isSelected ? .white : slotAccent)
 
                                 Spacer(minLength: 0)
 
                                 Circle()
                                     .fill(isSelected ? Color.green : slotAccent.opacity(0.45))
-                                    .frame(width: 6, height: 6)
+                                    .frame(width: 6 * scale, height: 6 * scale)
                                     .shadow(color: isSelected ? Color.green : .clear, radius: 3)
                             }
 
                             Text(shortTitle.isEmpty ? slot.name : shortTitle)
-                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
                                 .foregroundColor(isSelected ? .white : Color(white: 0.85))
                                 .lineLimit(1)
 
-                            HStack(spacing: 4) {
+                            HStack(spacing: 4 * scale) {
                                 Text("\(litCount) LED")
-                                    .font(.system(size: 6, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
                                     .foregroundColor(isSelected ? slotAccent : Color(white: 0.55))
                                 Text("•")
-                                    .font(.system(size: 6, weight: .bold))
+                                    .font(.system(size: 6 * scale, weight: .bold))
                                     .foregroundColor(Color(white: 0.4))
                                 Text("\(macroCount) ACT")
-                                    .font(.system(size: 6, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
                                     .foregroundColor(macroCount > 0 ? Color.yellow.opacity(0.9) : Color(white: 0.55))
                                 Spacer(minLength: 0)
                             }
                         }
-                        .padding(6)
+                        .padding(6 * scale)
+                        .frame(minHeight: isExp ? 74 : 36)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
                                 .fill(isSelected ? slotAccent.opacity(0.22) : Color.black.opacity(0.5))
@@ -10756,25 +10819,36 @@ struct ContentView: View {
     // RIGHT WING (RED BOX #2): GROUND-UP CUSTOM LIGHTING FX STUDIO
     // ------------------------------------------------------------------------
     private func rightWingStudioPanel(isSpotlight: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let scale: CGFloat = currentScale(for: .customFXStudio, isSpotlight: isSpotlight)
+
+        return VStack(alignment: .leading, spacing: 7) {
             if !isSpotlight {
-                // Header (CLICK TOP BAR TO CENTER ON SCREEN & BLUR BACKGROUND!)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
+                // Header (Uniform across all modules)
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
                         Image(systemName: "wand.and.stars")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
-                        Text("CUSTOM FX STUDIO")
+
+                        Text("CUSTOM FX")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
                         Spacer(minLength: 2)
+
                         if engine.isPlayingCustomFX {
                             HStack(spacing: 3) {
-                                Circle().fill(Color.green).frame(width: 6, height: 6)
-                                Text("LIVE ON HW")
-                                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                                Circle().fill(Color.green).frame(width: 5, height: 5)
+                                Text("LIVE")
+                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
                                     .foregroundColor(.green)
                             }
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.18))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                         }
                     }
                     .contentShape(Rectangle())
@@ -10792,15 +10866,15 @@ struct ContentView: View {
 
             // 3-Tab Switcher: Frame Sequencer / Procedural Wave Synth / Saved Shows
             HStack(spacing: 4) {
-                wingTabButton(title: "SEQUENCER", active: engine.rightWingTab == "SEQUENCER") {
+                wingTabButton(title: "SEQUENCER", active: engine.rightWingTab == "SEQUENCER", scale: scale) {
                     engine.editingCustomFX.isProcedural = false
                     engine.rightWingTab = "SEQUENCER"
                 }
-                wingTabButton(title: "WAVE SYNTH", active: engine.rightWingTab == "WAVESYNTH") {
+                wingTabButton(title: "WAVE SYNTH", active: engine.rightWingTab == "WAVESYNTH", scale: scale) {
                     engine.editingCustomFX.isProcedural = true
                     engine.rightWingTab = "WAVESYNTH"
                 }
-                wingTabButton(title: "MY SHOWS (\(engine.customEffects.count))", active: engine.rightWingTab == "LIBRARY") {
+                wingTabButton(title: "MY SHOWS (\(engine.customEffects.count))", active: engine.rightWingTab == "LIBRARY", scale: scale) {
                     engine.rightWingTab = "LIBRARY"
                 }
             }
@@ -11368,53 +11442,57 @@ struct ContentView: View {
     private func rightWingReactiveKeyFXPanel(isSpotlight: Bool = false) -> some View {
         let isEnabled = (engine.reactiveKeyFXMode != .off)
         let activeColor = engine.reactiveFXRainbowColor ? engine.currentTheme.accentPrimary : ledColor(engine.reactiveFXColorVelocity)
+        let scale: CGFloat = currentScale(for: .reactiveKeyFX, isSpotlight: isSpotlight)
+        let isExp = isExpanded(module: .reactiveKeyFX, isSpotlight: isSpotlight)
 
         return VStack(alignment: .leading, spacing: 6) {
             if !isSpotlight {
-                // Header & Live Pulse Status (CLICK TOP BAR TO CENTER ON SCREEN & BLUR BACKGROUND!)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
+                // Header (Uniform across all modules)
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
                         Image(systemName: "waveform.circle.fill")
-                            .font(.system(size: 10.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(isEnabled ? activeColor : Color(white: 0.5))
                             .shadow(color: isEnabled ? activeColor.opacity(0.85) : .clear, radius: 4)
 
-                        Text("REACTIVE KEY FX // LIVE")
+                        Text("REACTIVE KEY FX")
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
                         Spacer(minLength: 2)
+
+                        Button(action: {
+                            if engine.reactiveKeyFXMode == .off {
+                                engine.reactiveKeyFXMode = .ripple
+                            } else {
+                                engine.reactiveKeyFXMode = .off
+                                engine.activeReactivePulses.removeAll()
+                                engine.restorePresetLEDs()
+                            }
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(isEnabled ? Color.green : Color(white: 0.4))
+                                    .frame(width: 5, height: 5)
+                                    .shadow(color: isEnabled ? Color.green : .clear, radius: 3)
+                                Text(isEnabled ? "ACTIVE" : "OFF")
+                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            }
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(isEnabled ? Color.green.opacity(0.18) : Color.white.opacity(0.08))
+                            .foregroundColor(isEnabled ? Color.green : Color(white: 0.6))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        }
+                        .buttonStyle(.plain)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.reactiveKeyFX)
                     }
-
-                    Button(action: {
-                        if engine.reactiveKeyFXMode == .off {
-                            engine.reactiveKeyFXMode = .ripple
-                        } else {
-                            engine.reactiveKeyFXMode = .off
-                            engine.activeReactivePulses.removeAll()
-                            engine.restorePresetLEDs()
-                        }
-                        SoundEffect.knobTick.play(with: engine.soundPack)
-                    }) {
-                        HStack(spacing: 3) {
-                            Circle()
-                                .fill(isEnabled ? Color.green : Color(white: 0.4))
-                                .frame(width: 6, height: 6)
-                                .shadow(color: isEnabled ? Color.green : .clear, radius: 3)
-                            Text(isEnabled ? "ACTIVE" : "OFF")
-                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
-                        .background(isEnabled ? Color.green.opacity(0.18) : Color.white.opacity(0.08))
-                        .foregroundColor(isEnabled ? Color.green : Color(white: 0.6))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
 
                     moduleHeaderControls(for: .reactiveKeyFX)
                 }
@@ -11426,130 +11504,131 @@ struct ContentView: View {
 
             ScrollView([.vertical], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 6) {
-                    // 6 Interactive Mechanical Keyboard FX Mode Pads (2x3 Grid)
+                    // 6 Interactive Mechanical Keyboard FX Mode Pads (2x3 Grid - doubles in size when expanded!)
                     let modes: [ReactiveKeyFXMode] = [.ripple, .crossLaser, .supernova, .heatTrail, .meteorRain, .arcLightning]
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5)], spacing: 5) {
-                ForEach(modes) { mode in
-                    let isSel = (engine.reactiveKeyFXMode == mode)
-                    Button(action: {
-                        engine.reactiveKeyFXMode = mode
-                        engine.triggerRandomDemoReactiveFX()
-                    }) {
-                        VStack(spacing: 3) {
-                            Image(systemName: mode.icon)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(isSel ? .black : activeColor)
-                            Text(mode.rawValue)
-                                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                                .foregroundColor(isSel ? .black : .white)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5.5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(isSel ? activeColor : Color.black.opacity(0.5))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(isSel ? Color.white.opacity(0.75) : activeColor.opacity(0.28), lineWidth: isSel ? 1.3 : 0.8)
-                        )
-                        .shadow(color: isSel ? activeColor.opacity(0.55) : .clear, radius: 4)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            // Wave Speed & Color Mode Selector (Rainbow Dynamic vs Solid Neon Swatches)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("WAVE SPEED:")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.7))
-                    Slider(value: $engine.reactiveFXSpeed, in: 0.4...3.0, step: 0.1)
-                        .accentColor(activeColor)
-                    Text(String(format: "%.1fx", engine.reactiveFXSpeed))
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                        .foregroundColor(activeColor)
-                        .frame(width: 24, alignment: .trailing)
-                }
-
-                HStack(spacing: 4) {
-                    Button(action: {
-                        engine.reactiveFXRainbowColor = true
-                        engine.triggerRandomDemoReactiveFX()
-                    }) {
-                        HStack(spacing: 2) {
-                            Text("🌈")
-                                .font(.system(size: 7))
-                            Text("PRISM")
-                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
-                        .background(engine.reactiveFXRainbowColor ? engine.currentTheme.accentPrimary : Color.white.opacity(0.1))
-                        .foregroundColor(engine.reactiveFXRainbowColor ? .black : .white)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-
-                    let colorSwatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 83, 3]
-                    ForEach(colorSwatches, id: \.self) { vel in
-                        let isPicked = (!engine.reactiveFXRainbowColor && engine.reactiveFXColorVelocity == vel)
-                        Circle()
-                            .fill(ledColor(vel))
-                            .frame(width: 13, height: 13)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: isPicked ? 1.6 : 0)
-                            )
-                            .shadow(color: isPicked ? ledColor(vel) : .clear, radius: 3)
-                            .onTapGesture {
-                                engine.reactiveFXRainbowColor = false
-                                engine.reactiveFXColorVelocity = vel
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 5 * scale), GridItem(.flexible(), spacing: 5 * scale), GridItem(.flexible(), spacing: 5 * scale)], spacing: 5 * scale) {
+                        ForEach(modes) { mode in
+                            let isSel = (engine.reactiveKeyFXMode == mode)
+                            Button(action: {
+                                engine.reactiveKeyFXMode = mode
                                 engine.triggerRandomDemoReactiveFX()
+                            }) {
+                                VStack(spacing: 3 * scale) {
+                                    Image(systemName: mode.icon)
+                                        .font(.system(size: 12 * scale, weight: .bold))
+                                        .foregroundColor(isSel ? .black : activeColor)
+                                    Text(mode.rawValue)
+                                        .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(isSel ? .black : .white)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: isExp ? 74 : 36)
+                                .padding(.vertical, 5.5 * scale)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(isSel ? activeColor : Color.black.opacity(0.5))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(isSel ? Color.white.opacity(0.75) : activeColor.opacity(0.28), lineWidth: isSel ? 1.3 : 0.8)
+                                )
+                                .shadow(color: isSel ? activeColor.opacity(0.55) : .clear, radius: 4)
                             }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    Spacer(minLength: 0)
 
-                    if !engine.reactiveFXRainbowColor {
-                        Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
+                    // Wave Speed & Color Mode Selector (doubles in size when expanded)
+                    VStack(alignment: .leading, spacing: 4 * scale) {
+                        HStack(spacing: 6) {
+                            Text("WAVE SPEED:")
+                                .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(white: 0.7))
+                            Slider(value: $engine.reactiveFXSpeed, in: 0.4...3.0, step: 0.1)
+                                .accentColor(activeColor)
+                            Text(String(format: "%.1fx", engine.reactiveFXSpeed))
+                                .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                .foregroundColor(activeColor)
+                                .frame(width: 24 * scale, alignment: .trailing)
+                        }
+
+                        HStack(spacing: 4 * scale) {
+                            Button(action: {
+                                engine.reactiveFXRainbowColor = true
+                                engine.triggerRandomDemoReactiveFX()
+                            }) {
+                                HStack(spacing: 2) {
+                                    Text("🌈")
+                                        .font(.system(size: 7 * scale))
+                                    Text("PRISM")
+                                        .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                                }
+                                .padding(.horizontal, 5 * scale)
+                                .padding(.vertical, 3 * scale)
+                                .background(engine.reactiveFXRainbowColor ? engine.currentTheme.accentPrimary : Color.white.opacity(0.1))
+                                .foregroundColor(engine.reactiveFXRainbowColor ? .black : .white)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                            .buttonStyle(.plain)
+
+                            let colorSwatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 83, 3]
+                            ForEach(colorSwatches, id: \.self) { vel in
+                                let isPicked = (!engine.reactiveFXRainbowColor && engine.reactiveFXColorVelocity == vel)
+                                Circle()
+                                    .fill(ledColor(vel))
+                                    .frame(width: 13 * scale, height: 13 * scale)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white, lineWidth: isPicked ? 1.6 : 0)
+                                    )
+                                    .shadow(color: isPicked ? ledColor(vel) : .clear, radius: 3)
+                                    .onTapGesture {
+                                        engine.reactiveFXRainbowColor = false
+                                        engine.reactiveFXColorVelocity = vel
+                                        engine.triggerRandomDemoReactiveFX()
+                                    }
+                            }
+                            Spacer(minLength: 0)
+
+                            if !engine.reactiveFXRainbowColor {
+                                Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
+                                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                                    .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
+                            }
+                        }
                     }
-                }
-            }
-            .padding(5)
-            .background(Color.black.opacity(0.4))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .padding(5 * scale)
+                    .background(Color.black.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            // Interactive Test Pulse Button + Live Active Wave Counter
-            HStack(spacing: 6) {
-                Button(action: {
-                    engine.triggerRandomDemoReactiveFX()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "hand.tap.fill")
-                        Text("TEST RIPPLE PULSE")
+                    // Interactive Test Pulse Button + Live Active Wave Counter (doubles in size when expanded)
+                    HStack(spacing: 6) {
+                        Button(action: {
+                            engine.triggerRandomDemoReactiveFX()
+                        }) {
+                            HStack(spacing: 4 * scale) {
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.system(size: 8 * scale))
+                                Text("TEST RIPPLE PULSE")
+                                    .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5 * scale)
+                            .background(activeColor.opacity(0.24))
+                            .foregroundColor(activeColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(activeColor.opacity(0.55), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+
+                        Text(engine.activeReactivePulses.isEmpty ? "PRESS ANY KEY" : "⚡ \(engine.activeReactivePulses.count) WAVES")
+                            .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.activeReactivePulses.isEmpty ? Color(white: 0.55) : Color.yellow)
+                            .padding(.horizontal, 6 * scale)
+                            .padding(.vertical, 5 * scale)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(activeColor.opacity(0.24))
-                    .foregroundColor(activeColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(activeColor.opacity(0.55), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-
-                Text(engine.activeReactivePulses.isEmpty ? "PRESS ANY KEY" : "⚡ \(engine.activeReactivePulses.count) WAVES")
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
-                    .foregroundColor(engine.activeReactivePulses.isEmpty ? Color(white: 0.55) : Color.yellow)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -11565,12 +11644,12 @@ struct ContentView: View {
     }
 
     // --- WING HELPER VIEWS ---
-    private func wingTabButton(title: String, active: Bool, action: @escaping () -> Void) -> some View {
+    private func wingTabButton(title: String, active: Bool, scale: CGFloat = 1.0, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9.5 * scale, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
+                .padding(.vertical, 5 * scale)
                 .background(active ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
                 .foregroundColor(active ? .black : Color(white: 0.88))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -11579,16 +11658,16 @@ struct ContentView: View {
         .hoverGrow(1.05)
     }
 
-    private func filterTogglePill(label: String, isOn: Binding<Bool>) -> some View {
+    private func filterTogglePill(label: String, isOn: Binding<Bool>, scale: CGFloat = 1.0) -> some View {
         Button(action: { isOn.wrappedValue.toggle() }) {
-            HStack(spacing: 3) {
+            HStack(spacing: 3 * scale) {
                 Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 9))
+                    .font(.system(size: 9 * scale))
                 Text(label)
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .padding(.vertical, 4 * scale)
             .background(isOn.wrappedValue ? engine.currentTheme.accentPrimary.opacity(0.24) : Color.white.opacity(0.08))
             .foregroundColor(isOn.wrappedValue ? engine.currentTheme.accentPrimary : Color(white: 0.78))
             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -11597,20 +11676,20 @@ struct ContentView: View {
         .hoverGrow(1.04)
     }
 
-    private func macroTriggerPad(title: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func macroTriggerPad(title: String, icon: String, scale: CGFloat = 1.0, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            VStack(spacing: 4 * scale) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 13 * scale, weight: .bold))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text(title)
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, 10 * scale)
             .padding(.horizontal, 4)
             .background(Color.black.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 7))
