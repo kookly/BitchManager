@@ -1677,7 +1677,7 @@ final class BitchBoyEngine: ObservableObject {
         if !bundleVer.isEmpty && bundleVer != "1.0" && bundleVer != "1.0.0" {
             return bundleVer
         }
-        return "1.1.0"
+        return "1.1.1"
     }
 
     private let storageKey = "BitchBoy_SavedSlots_v5"
