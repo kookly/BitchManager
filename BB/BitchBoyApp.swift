@@ -9950,71 +9950,80 @@ struct ContentView: View {
                     .font(.system(size: 6.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.55))
 
-                HStack(spacing: 3) {
-                    Button(action: { engine.applyOSCAutoMapTemplate() }) {
-                        Text("⚡ AUTO-MAP")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(engine.currentTheme.accentPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.05)
-                    .help("Auto-map all 65 controls to /bitchboy/...")
+                VStack(spacing: 3) {
+                    HStack(spacing: 3) {
+                        Button(action: { engine.applyOSCAutoMapTemplate() }) {
+                            Text("⚡ AUTO-MAP")
+                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.1))
+                                .foregroundColor(engine.currentTheme.accentPrimary)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Auto-map all 65 controls to /bitchboy/...")
 
-                    Button(action: { engine.applyOSCQLabTemplate() }) {
-                        Text("🎭 QLAB")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.yellow)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.05)
-                    .help("Map cues 1..32, transport and volume faders for QLab")
+                        Button(action: { engine.applyOSCQLabTemplate() }) {
+                            Text("🎭 QLAB")
+                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.1))
+                                .foregroundColor(.yellow)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Map cues 1..32, transport and volume faders for QLab")
 
-                    Button(action: { engine.applyOSCResolumeTemplate() }) {
-                        Text("🎬 RESOLUME")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.cyan)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        Button(action: { engine.applyOSCResolumeTemplate() }) {
+                            Text("🎬 RESOLUME")
+                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.1))
+                                .foregroundColor(.cyan)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Map layer clips and opacity faders for Resolume Arena")
                     }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.05)
-                    .help("Map layer clips and opacity faders for Resolume Arena")
 
-                    Button(action: { engine.applyOSCEosTemplate() }) {
-                        Text("💡 ETC EOS")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.orange)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.05)
-                    .help("Map submasters and keys for ETC EOS / nomad")
+                    HStack(spacing: 3) {
+                        Button(action: { engine.applyOSCEosTemplate() }) {
+                            Text("💡 ETC EOS")
+                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.1))
+                                .foregroundColor(.orange)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Map submasters and keys for ETC EOS / nomad")
 
-                    Button(action: { engine.clearAllOSCMappings() }) {
-                        Text("🧹 CLEAR")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.red.opacity(0.2))
-                            .foregroundColor(.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        Button(action: { engine.clearAllOSCMappings() }) {
+                            Text("🧹 CLEAR ALL")
+                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 3)
+                                .background(Color.red.opacity(0.2))
+                                .foregroundColor(.red)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Disable all mappings")
                     }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.05)
-                    .help("Disable all mappings")
                 }
             }
 
@@ -10060,15 +10069,19 @@ struct ContentView: View {
                 }
             }
 
-            // Section Filter Tabs
-            HStack(spacing: 2) {
-                oscFilterTabButton(title: "ALL", filterKey: "ALL")
-                oscFilterTabButton(title: "GRID", filterKey: "GRID")
-                oscFilterTabButton(title: "STRIP", filterKey: "STRIP")
-                oscFilterTabButton(title: "PAD", filterKey: "PAD")
-                oscFilterTabButton(title: "V-FADERS", filterKey: "VFADERS")
-                oscFilterTabButton(title: "H-FADERS", filterKey: "HFADERS")
-                oscFilterTabButton(title: "MASTER/KNOBS", filterKey: "MASTER_KNOBS")
+            // Section Filter Tabs (2 clean rows - never wraps or clips!)
+            VStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    oscFilterTabButton(title: "ALL", filterKey: "ALL")
+                    oscFilterTabButton(title: "GRID", filterKey: "GRID")
+                    oscFilterTabButton(title: "STRIP", filterKey: "STRIP")
+                    oscFilterTabButton(title: "PAD", filterKey: "PAD")
+                }
+                HStack(spacing: 2) {
+                    oscFilterTabButton(title: "V-FADERS", filterKey: "VFADERS")
+                    oscFilterTabButton(title: "H-FADERS", filterKey: "HFADERS")
+                    oscFilterTabButton(title: "KNOBS", filterKey: "MASTER_KNOBS")
+                }
             }
 
             // Controls List
@@ -10104,8 +10117,10 @@ struct ContentView: View {
             SoundEffect.knobTick.play(with: engine.soundPack)
         }) {
             Text(title)
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 5)
+                .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)
                 .background(isActive ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
                 .foregroundColor(isActive ? .black : Color(white: 0.85))
