@@ -42,6 +42,13 @@
 - **Spotlight Mode**: Click any module title bar to bring it front-and-center in an isolated spotlight overlay with background defocusing.
 - **Tactile Hover Magnification**: Subtle visual feedback and hover-scaling across all interactive buttons, faders, and keys.
 
+### 💻 Protocol Terminal // Multi-Protocol Monitor & CLI
+- **Multi-Protocol Packet Sniffer**: Real-time bidirectional telemetry for **MIDI IN/OUT**, **OSC IN/OUT**, **DMX (Art-Net & sACN / E1.31)**, **MSC (MIDI Show Control)**, and **SYS** events with decoded payloads and raw hex dumps.
+- **Interactive Quick-CLI**: Inject direct OSC packets (e.g. `/cue/1/go`), raw MIDI Note/CC triggers, or system blackout panic commands via a fast text input console.
+- **Network Interface & Throughput Telemetry**: Auto-discovers local IPv4 interfaces, packet transfer rates, active listener ports, and live socket connection health.
+- **Protocol Filtering & Search**: Instant filtering by protocol type or keyword search, pause/freeze stream, and 1-click clipboard log export.
+- **Modular Docking & Pop-out**: Detach into an independent floating monitor window (with `⌘W` auto re-dock) or dock into console wings and expansion bays.
+
 ### ⚡ Reactive Key-Press FX Engine
 - **Spatial 2D Physics Animations**: Live visual wave propagation triggered by physical BitchBoy key presses or software clicks.
 - **6 FX Modes**: **Ripple Ring**, **Laser Cross**, **Supernova**, **Heat Trail**, **Meteor Drop**, and **Arc Lightning**.

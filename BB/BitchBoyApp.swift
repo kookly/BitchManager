@@ -16007,6 +16007,10 @@ struct BitchBoyNativeApp: App {
 
                     • 49-Pad LED Matrix & Reactive FX Engine
                     • Pop-out Standalone Floating Modules (⌘W auto re-dock)
+                    • Protocol Terminal & Network Traffic Monitor:
+                      - Live MIDI IN/OUT, OSC IN/OUT, Art-Net & sACN (E1.31) packet sniffer
+                      - Interactive CLI for instant MIDI, OSC & Panic command injection
+                      - Real-time network interface telemetry & throughput meters
                     • Modular Expansion Bays & Wing Racks
                     • Custom Sound & Theme Studio (featuring Prism Rainbow 🌈)
                     • High-Speed MIDI, OSC & CGEvent QWERTY Injection
