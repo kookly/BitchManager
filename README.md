@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-macOS%2014.0+-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Platform" />
-  <img src="https://img.shields.io/badge/Release-v1.1.0-00E5FF?style=for-the-badge&logo=github&logoColor=black" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v2.0.0-00E5FF?style=for-the-badge&logo=github&logoColor=black" alt="Release" />
   <img src="https://img.shields.io/badge/Swift-5.9%20%2F%20SwiftUI-FA7343?style=for-the-badge&logo=swift&logoColor=white" alt="Swift" />
   <img src="https://img.shields.io/badge/Protocols-MIDI%20%E2%80%A2%20OSC-00E676?style=for-the-badge" alt="Protocols" />
 </p>

@@ -4,6 +4,7 @@ import CoreMIDI
 import Network
 import Combine
 import UniformTypeIdentifiers
+import Darwin
 
 // ============================================================================
 // 1. DATA MODELS & EXACT 69-CONTROL HARDWARE SPECIFICATION
@@ -119,6 +120,14 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
     case customFXStudio = "CUSTOM FX STUDIO"
     case reactiveKeyFX = "REACTIVE KEY FX // LIVE"
     case showControl = "SHOW CONTROL // OSC STUDIO"
+    case terminal = "PROTOCOL TERMINAL // MONITOR"
+    case keyGrid8x4 = "8X4 KEY GRID // 32 KEYS"
+    case keyStrip1x8 = "1X8 KEY STRIP // 8 KEYS"
+    case keypad3x3 = "3X3 KEYPAD & MASCOT"
+    case verticalFaders = "8 VERTICAL FADERS // CC 0-7"
+    case horizontalFaders = "4 HORIZONTAL FADERS // CC 8-11"
+    case rotaryKnobs = "2X4 ROTARY KNOBS // CC 20-27"
+    case colorPickerHUD = "COLOR PICKER // LED HUD"
 
     var id: String { rawValue }
 
@@ -141,6 +150,14 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .customFXStudio: return "CUSTOM FX"
         case .reactiveKeyFX: return "REACTIVE FX"
         case .showControl: return "SHOW CTRL"
+        case .terminal: return "TERMINAL"
+        case .keyGrid8x4: return "KEY GRID"
+        case .keyStrip1x8: return "KEY STRIP"
+        case .keypad3x3: return "3X3 KEYPAD"
+        case .verticalFaders: return "V-FADERS"
+        case .horizontalFaders: return "H-FADERS"
+        case .rotaryKnobs: return "KNOBS"
+        case .colorPickerHUD: return "COLOR PICKER"
         }
     }
 
@@ -151,6 +168,14 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .customFXStudio: return "wand.and.stars"
         case .reactiveKeyFX: return "waveform.circle.fill"
         case .showControl: return "dot.radiowaves.left.and.right"
+        case .terminal: return "apple.terminal.fill"
+        case .keyGrid8x4: return "square.grid.4x3.fill"
+        case .keyStrip1x8: return "rectangle.split.3x1.fill"
+        case .keypad3x3: return "circle.grid.3x3.fill"
+        case .verticalFaders: return "slider.vertical.3"
+        case .horizontalFaders: return "slider.horizontal.below.rectangle"
+        case .rotaryKnobs: return "dial.low.fill"
+        case .colorPickerHUD: return "paintpalette.fill"
         }
     }
 
@@ -162,6 +187,14 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .customFXStudio: return NSSize(width: 375, height: 520)
         case .reactiveKeyFX: return NSSize(width: 375, height: 265)
         case .showControl: return NSSize(width: 420, height: 560)
+        case .terminal: return NSSize(width: 460, height: 430)
+        case .keyGrid8x4: return NSSize(width: 460, height: 270)
+        case .keyStrip1x8: return NSSize(width: 460, height: 160)
+        case .keypad3x3: return NSSize(width: 280, height: 380)
+        case .verticalFaders: return NSSize(width: 460, height: 260)
+        case .horizontalFaders: return NSSize(width: 340, height: 220)
+        case .rotaryKnobs: return NSSize(width: 280, height: 360)
+        case .colorPickerHUD: return NSSize(width: 360, height: 400)
         }
     }
 
@@ -172,11 +205,50 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .customFXStudio: return NSSize(width: 320, height: 450)
         case .reactiveKeyFX: return NSSize(width: 320, height: 225)
         case .showControl: return NSSize(width: 340, height: 460)
+        case .terminal: return NSSize(width: 320, height: 240)
+        case .keyGrid8x4: return NSSize(width: 360, height: 210)
+        case .keyStrip1x8: return NSSize(width: 360, height: 120)
+        case .keypad3x3: return NSSize(width: 220, height: 290)
+        case .verticalFaders: return NSSize(width: 360, height: 190)
+        case .horizontalFaders: return NSSize(width: 260, height: 160)
+        case .rotaryKnobs: return NSSize(width: 210, height: 280)
+        case .colorPickerHUD: return NSSize(width: 280, height: 300)
         }
     }
 
     var defaultSlotHeight: CGFloat {
-        return 210
+        switch self {
+        case .customFXStudio: return 490
+        case .reactiveKeyFX: return 300
+        case .midiRouter: return 440
+        case .memorySlots: return 240
+        case .showControl: return 480
+        case .terminal: return 340
+        case .keyGrid8x4: return 250
+        case .keyStrip1x8: return 140
+        case .keypad3x3: return 330
+        case .verticalFaders: return 240
+        case .horizontalFaders: return 180
+        case .rotaryKnobs: return 320
+        case .colorPickerHUD: return 350
+        }
+    }
+
+    var isHardwareModule: Bool {
+        switch self {
+        case .keyGrid8x4, .keyStrip1x8, .keypad3x3, .verticalFaders, .horizontalFaders, .rotaryKnobs, .colorPickerHUD:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static var expansionModules: [StudioModuleID] {
+        return [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal]
+    }
+
+    static var hardwareModules: [StudioModuleID] {
+        return [.keyGrid8x4, .keyStrip1x8, .keypad3x3, .verticalFaders, .horizontalFaders, .rotaryKnobs, .colorPickerHUD]
     }
 }
 
@@ -195,6 +267,116 @@ enum ModuleZone: String, CaseIterable, Codable {
         case .floating: return "macwindow.badge.plus"
         }
     }
+}
+
+// ----------------------------------------------------------------------------
+// LOCAL NETWORK INTERFACES & TERMINAL TAB NAVIGATION
+// ----------------------------------------------------------------------------
+
+struct NetworkInterfaceInfo: Identifiable {
+    let id = UUID()
+    let name: String
+    let ip: String
+    let isLoopback: Bool
+}
+
+func getLocalNetworkInterfaces() -> [NetworkInterfaceInfo] {
+    var interfaces: [NetworkInterfaceInfo] = []
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0, let first = ifaddr else {
+        return [NetworkInterfaceInfo(name: "Loopback (lo0)", ip: "127.0.0.1", isLoopback: true)]
+    }
+    defer { freeifaddrs(ifaddr) }
+
+    for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+        let flags = Int32(ptr.pointee.ifa_flags)
+        let addr = ptr.pointee.ifa_addr.pointee
+        if (flags & (IFF_UP | IFF_RUNNING)) != 0 && addr.sa_family == UInt8(AF_INET) {
+            let name = String(cString: ptr.pointee.ifa_name)
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
+                let ip = String(cString: hostname)
+                let isLo = (flags & IFF_LOOPBACK) != 0 || ip == "127.0.0.1"
+                let friendlyName: String
+                if name.hasPrefix("en0") {
+                    friendlyName = "Wi-Fi (en0)"
+                } else if name.hasPrefix("en") {
+                    friendlyName = "Ethernet (\(name))"
+                } else if isLo {
+                    friendlyName = "Loopback (lo0)"
+                } else {
+                    friendlyName = "Interface (\(name))"
+                }
+                interfaces.append(NetworkInterfaceInfo(name: friendlyName, ip: ip, isLoopback: isLo))
+            }
+        }
+    }
+    if interfaces.isEmpty {
+        interfaces.append(NetworkInterfaceInfo(name: "Loopback (lo0)", ip: "127.0.0.1", isLoopback: true))
+    }
+    return interfaces
+}
+
+enum TerminalTab: String, CaseIterable, Identifiable {
+    case console = "CONSOLE"
+    case network = "NETWORK"
+    case settings = "SETTINGS"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .console: return "apple.terminal.fill"
+        case .network: return "network"
+        case .settings: return "slider.horizontal.3"
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// PROTOCOL MONITOR DATA MODEL & HELPERS
+// ----------------------------------------------------------------------------
+
+func midiNoteName(_ note: UInt8) -> String {
+    let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    let octave = Int(note) / 12 - 1
+    let name = noteNames[Int(note) % 12]
+    return "\(name)\(octave)"
+}
+
+struct ProtocolEvent: Identifiable {
+    let id = UUID()
+    let timestamp: Date
+    enum EventType: String, CaseIterable, Identifiable {
+        case all = "ALL"
+        case midiIn = "MIDI IN"
+        case midiOut = "MIDI OUT"
+        case oscIn = "OSC IN"
+        case oscOut = "OSC OUT"
+        case dmx = "DMX"
+        case msc = "MSC"
+        case sys = "SYS"
+
+        var id: String { rawValue }
+
+        var tagColor: Color {
+            switch self {
+            case .all: return .white
+            case .midiIn: return Color(red: 0.2, green: 0.95, blue: 0.5)
+            case .midiOut: return Color(red: 0.25, green: 0.85, blue: 0.95)
+            case .oscIn: return Color(red: 1.0, green: 0.65, blue: 0.2)
+            case .oscOut: return Color(red: 0.85, green: 0.45, blue: 1.0)
+            case .dmx: return Color(red: 0.95, green: 0.85, blue: 0.25)
+            case .msc: return Color(red: 0.45, green: 0.75, blue: 1.0)
+            case .sys: return Color(white: 0.7)
+            }
+        }
+    }
+    let type: EventType
+    let channelOrTarget: String
+    let command: String
+    let details: String
+    let rawHex: String
 }
 
 enum SoundPack: String, CaseIterable, Identifiable {
@@ -507,9 +689,31 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
     case neonCyber = "NEON CYBER"
     case royalGold = "ROYAL GOLD"
     case stealthBlack = "STEALTH NOIR"
+    case prismRainbow = "PRISM RAINBOW 🌈"
     case customUser = "CUSTOM THEME"
 
     var id: String { rawValue }
+
+    var isRainbow: Bool {
+        self == .prismRainbow
+    }
+
+    var rainbowGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 1.00, green: 0.22, blue: 0.35),
+                Color(red: 1.00, green: 0.55, blue: 0.10),
+                Color(red: 1.00, green: 0.88, blue: 0.15),
+                Color(red: 0.20, green: 0.95, blue: 0.40),
+                Color(red: 0.10, green: 0.85, blue: 1.00),
+                Color(red: 0.45, green: 0.35, blue: 1.00),
+                Color(red: 0.90, green: 0.25, blue: 0.95),
+                Color(red: 1.00, green: 0.22, blue: 0.35)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     var pcbBackground: Color {
         switch self {
@@ -518,6 +722,7 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
         case .neonCyber: return Color(red: 0.08, green: 0.02, blue: 0.18)
         case .royalGold: return Color(red: 0.18, green: 0.12, blue: 0.04)
         case .stealthBlack: return Color(red: 0.06, green: 0.06, blue: 0.07)
+        case .prismRainbow: return Color(red: 0.06, green: 0.03, blue: 0.12)
         case .customUser: return BitchBoyEngine.activeCustomThemeStatic.pcbBackground
         }
     }
@@ -534,6 +739,16 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
             return [Color(red: 0.98, green: 0.85, blue: 0.45), Color(red: 0.65, green: 0.45, blue: 0.15)]
         case .stealthBlack:
             return [Color(white: 0.35), Color(white: 0.15), Color(white: 0.08)]
+        case .prismRainbow:
+            return [
+                Color(red: 1.00, green: 0.22, blue: 0.35),
+                Color(red: 1.00, green: 0.55, blue: 0.10),
+                Color(red: 1.00, green: 0.88, blue: 0.15),
+                Color(red: 0.20, green: 0.95, blue: 0.40),
+                Color(red: 0.10, green: 0.85, blue: 1.00),
+                Color(red: 0.45, green: 0.35, blue: 1.00),
+                Color(red: 0.90, green: 0.25, blue: 0.95)
+            ]
         case .customUser:
             return BitchBoyEngine.activeCustomThemeStatic.outerBezelColors
         }
@@ -546,6 +761,7 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
         case .neonCyber: return Color(red: 1.0, green: 0.25, blue: 0.88)
         case .royalGold: return Color(red: 0.98, green: 0.82, blue: 0.35)
         case .stealthBlack: return Color(white: 0.85)
+        case .prismRainbow: return Color(red: 1.00, green: 0.35, blue: 0.85)
         case .customUser: return BitchBoyEngine.activeCustomThemeStatic.accentPrimary
         }
     }
@@ -557,6 +773,7 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
         case .neonCyber: return Color(red: 0.20, green: 0.92, blue: 0.98)
         case .royalGold: return Color(red: 0.92, green: 0.75, blue: 0.25)
         case .stealthBlack: return Color(white: 0.45)
+        case .prismRainbow: return Color(red: 0.25, green: 0.92, blue: 0.98)
         case .customUser: return BitchBoyEngine.activeCustomThemeStatic.sectionOutline
         }
     }
@@ -568,6 +785,7 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
         case .neonCyber: return Color(red: 0.95, green: 0.75, blue: 0.98)
         case .royalGold: return Color(red: 0.98, green: 0.92, blue: 0.70)
         case .stealthBlack: return Color(white: 0.80)
+        case .prismRainbow: return Color(red: 1.00, green: 0.92, blue: 0.45)
         case .customUser: return BitchBoyEngine.activeCustomThemeStatic.headerText
         }
     }
@@ -1628,7 +1846,7 @@ final class BitchBoyEngine: ObservableObject {
     @Published var showCustomSoundStudio: Bool = false
     @Published var customSoundUpdateToken: Int = 0
     @Published var spotlightModule: StudioModuleID? = nil
-    @Published var moduleOrder: [StudioModuleID] = [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX]
+    @Published var moduleOrder: [StudioModuleID] = [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal]
     @Published var isRearrangingModules: Bool = false
     @Published var draggingModule: StudioModuleID? = nil
     @Published var detachedModules: Set<StudioModuleID> = []
@@ -1638,14 +1856,64 @@ final class BitchBoyEngine: ObservableObject {
     private let moduleOrderStorageKey = "BitchBoy_ModuleOrder_v1"
     private let soundPackStorageKey = "BitchBoy_SoundPack_v1"
 
+    // --- PROTOCOL TERMINAL // INCOMING & OUTGOING PACKET MONITOR & NETWORK STATE ---
+    @Published var protocolEvents: [ProtocolEvent] = []
+    @Published var isProtocolPaused: Bool = false
+    @Published var protocolFilter: ProtocolEvent.EventType = .all
+    @Published var terminalTab: TerminalTab = .console
+
+    // Receiving OSC Configuration
+    @Published var oscIncomingHost: String = "0.0.0.0"
+    @Published var oscIncomingPort: UInt16 = 8000
+    @Published var isOscListenerActive: Bool = false
+    private var oscListener: NWListener?
+
+    // Receiving MIDI Configuration
+    @Published var availableInputSources: [String] = []
+    @Published var selectedMidiInputDevice: String = "ALL" // "ALL", "AUTO", or device name
+    @Published var selectedMidiInputChannel: Int = 0 // 0 = Omni (All), 1..16
+
+    // Receiving Art-Net Configuration
+    @Published var artNetIncomingHost: String = "0.0.0.0"
+    @Published var artNetIncomingPort: UInt16 = 6454
+    @Published var artNetIncomingUniverse: UInt16 = 0
+    @Published var isArtNetListenerActive: Bool = false
+    private var artNetListener: NWListener?
+
+    // Receiving sACN Configuration
+    @Published var sacnIncomingHost: String = "0.0.0.0"
+    @Published var sacnIncomingPort: UInt16 = 5568
+    @Published var sacnIncomingUniverse: UInt16 = 1
+    @Published var issACNListenerActive: Bool = false
+    private var sacnListener: NWListener?
+
+    // Packet Telemetry & Counters
+    @Published var totalPacketsReceived: Int = 0
+    @Published var midiPacketsCount: Int = 0
+    @Published var oscPacketsCount: Int = 0
+    @Published var dmxPacketsCount: Int = 0
+    @Published var mscPacketsCount: Int = 0
+    @Published var lastPacketTime: Date? = nil
+
+    private let oscPortStorageKey = "BitchBoy_OSCIncomingPort_v1"
+    private let oscHostStorageKey = "BitchBoy_OSCIncomingHost_v1"
+    private let midiDeviceStorageKey = "BitchBoy_MIDIInputDevice_v1"
+    private let midiChannelStorageKey = "BitchBoy_MIDIInputChannel_v1"
+    private let artNetPortStorageKey = "BitchBoy_ArtNetIncomingPort_v1"
+    private let artNetHostStorageKey = "BitchBoy_ArtNetIncomingHost_v1"
+    private let artNetUnivStorageKey = "BitchBoy_ArtNetIncomingUniverse_v1"
+    private let sacnPortStorageKey = "BitchBoy_SACNIncomingPort_v1"
+    private let sacnHostStorageKey = "BitchBoy_SACNIncomingHost_v1"
+    private let sacnUnivStorageKey = "BitchBoy_SACNIncomingUniverse_v1" 
+
     // --- DYNAMIC MODULE PLACEMENT & RESIZING ENGINE ---
     @Published var leftWingModules: [StudioModuleID] = [.showControl, .memorySlots]
     @Published var rightWingModules: [StudioModuleID] = [.midiRouter, .customFXStudio]
     @Published var bottomRackModules: [StudioModuleID] = [.reactiveKeyFX]
     @Published var moduleCustomHeights: [StudioModuleID: CGFloat] = [:]
     @Published var moduleCustomWidths: [StudioModuleID: CGFloat] = [:]
-    @Published var leftWingWidth: CGFloat = 274
-    @Published var rightWingWidth: CGFloat = 274
+    @Published var leftWingWidth: CGFloat = 380
+    @Published var rightWingWidth: CGFloat = 380
     private let leftWingStorageKey = "BitchBoy_LeftWingModules_v2"
     private let rightWingStorageKey = "BitchBoy_RightWingModules_v2"
     private let bottomRackStorageKey = "BitchBoy_BottomRackModules_v2"
@@ -1685,7 +1953,7 @@ final class BitchBoyEngine: ObservableObject {
         if !bundleVer.isEmpty && bundleVer != "1.0" && bundleVer != "1.0.0" {
             return bundleVer
         }
-        return "1.1.1"
+        return "2.0.0"
     }
 
     private let storageKey = "BitchBoy_SavedSlots_v5"
@@ -1697,8 +1965,13 @@ final class BitchBoyEngine: ObservableObject {
         loadCustomEffectsFromDisk()
         loadModuleOrderAndSoundSettings()
         loadUISettingsAndAppIcon()
+        loadProtocolSettings()
         setupCoreMIDI()
         startHardwareWatchdog()
+        startOSCListener(port: oscIncomingPort, host: oscIncomingHost)
+        startArtNetListener(port: artNetIncomingPort)
+        startsACNListener(port: sacnIncomingPort)
+        recordProtocolEvent(type: .sys, command: "PROTOCOL TERMINAL READY", details: "CoreMIDI + UDP :\(oscIncomingPort) Active", rawHex: "7F 00 00 01", channel: "SYSTEM")
 
         // Automatic GitHub Release Auto-Updater Check (runs 3s after boot, then every 4 hours)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
@@ -1962,8 +2235,9 @@ final class BitchBoyEngine: ObservableObject {
             }
         }
 
-        // 2. Connect inputPort ONLY to real BitchBoy hardware sources; disconnect any other MIDI programs!
+        // 2. Discover all MIDI input sources & connect per selectedMidiInputDevice
         let srcCount = MIDIGetNumberOfSources()
+        var discoveredSources: [String] = []
         for i in 0..<srcCount {
             let src = MIDIGetSource(i)
             let sName = getEndpointName(src)
@@ -1971,15 +2245,32 @@ final class BitchBoyEngine: ObservableObject {
                 MIDIPortDisconnectSource(inputPort, src)
                 continue
             }
-            if isRealBitchBoyEndpoint(src) {
+            if !discoveredSources.contains(sName) {
+                discoveredSources.append(sName)
+            }
+            let isBB = isRealBitchBoyEndpoint(src)
+            if isBB && !found {
+                targetName = sName
+                found = true
+            }
+
+            let shouldConnect: Bool
+            if selectedMidiInputDevice == "ALL" {
+                shouldConnect = true
+            } else if selectedMidiInputDevice == "AUTO" {
+                shouldConnect = isBB
+            } else {
+                shouldConnect = (sName == selectedMidiInputDevice) || isBB
+            }
+
+            if shouldConnect {
                 MIDIPortConnectSource(inputPort, src, nil)
-                if !found {
-                    targetName = sName
-                    found = true
-                }
             } else {
                 MIDIPortDisconnectSource(inputPort, src)
             }
+        }
+        if availableInputSources != discoveredSources {
+            availableInputSources = discoveredSources
         }
 
         // 3. Refresh all available MIDI output destinations for the MIDI Router
@@ -2303,6 +2594,13 @@ final class BitchBoyEngine: ObservableObject {
     // TRANSMIT MIDI & LED HARDWARE
     // ------------------------------------------------------------------------
     func sendNoteOn(note: UInt8, velocity: UInt8) {
+        recordProtocolEvent(
+            type: .midiOut,
+            command: "NOTE ON #\(note) (\(midiNoteName(note)))",
+            details: "Velocity: \(velocity) [\(Int(round(Double(velocity)/127.0*100)))%]",
+            rawHex: String(format: "90 %02X %02X", note, velocity),
+            channel: "Ch:1"
+        )
         guard isConnected, bitchBoyDestination != 0 else { return }
         var packetList = MIDIPacketList()
         var curPacket = MIDIPacketListInit(&packetList)
@@ -2316,6 +2614,13 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func sendCC(cc: UInt8, value: UInt8) {
+        recordProtocolEvent(
+            type: .midiOut,
+            command: "CC #\(cc)",
+            details: "Value: \(value)",
+            rawHex: String(format: "B0 %02X %02X", cc, value),
+            channel: "Ch:1"
+        )
         guard isConnected, bitchBoyDestination != 0 else { return }
         var packetList = MIDIPacketList()
         var curPacket = MIDIPacketListInit(&packetList)
@@ -2463,6 +2768,13 @@ final class BitchBoyEngine: ObservableObject {
             mscLogHistory.removeLast()
         }
         log("📥 RX MSC: \(mscMsg.summary)")
+        recordProtocolEvent(
+            type: .msc,
+            command: "MSC \(command.title.uppercased())",
+            details: "Format: \(format.rawValue) | Q: \(cueStr.isEmpty ? "None" : cueStr)",
+            rawHex: bytes.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " "),
+            channel: "Dev:\(deviceID)"
+        )
         SoundEffect.keyTap.play(with: soundPack)
 
         if mscAutoTriggerOnInbound {
@@ -2508,6 +2820,13 @@ final class BitchBoyEngine: ObservableObject {
         universe: UInt16 = 0,
         channels: [UInt8]
     ) {
+        recordProtocolEvent(
+            type: .dmx,
+            command: "ART-NET DMX DUMP",
+            details: "Univ: \(universe) | \(channels.count) Chans",
+            rawHex: "41 72 74 2D 4E 65 74",
+            channel: "\(host):\(artNetPort)"
+        )
         let packet = ArtNetPacketBuilder.buildDMXPacket(universe: universe, channels: channels, sequence: artNetSequence)
         artNetSequence = (artNetSequence &+ 1)
         guard let nwPort = NWEndpoint.Port(rawValue: artNetPort) else { return }
@@ -3893,9 +4212,402 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     // ------------------------------------------------------------------------
+    // PROTOCOL TERMINAL // MULTI-PROTOCOL RECEIVER & NETWORK LISTENER ENGINE
+    // ------------------------------------------------------------------------
+
+    func loadProtocolSettings() {
+        if UserDefaults.standard.object(forKey: oscPortStorageKey) != nil {
+            let p = UserDefaults.standard.integer(forKey: oscPortStorageKey)
+            if p > 0 && p < 65536 { oscIncomingPort = UInt16(p) }
+        }
+        if let h = UserDefaults.standard.string(forKey: oscHostStorageKey), !h.isEmpty {
+            oscIncomingHost = h
+        }
+        if let dev = UserDefaults.standard.string(forKey: midiDeviceStorageKey), !dev.isEmpty {
+            selectedMidiInputDevice = dev
+        }
+        if UserDefaults.standard.object(forKey: midiChannelStorageKey) != nil {
+            selectedMidiInputChannel = UserDefaults.standard.integer(forKey: midiChannelStorageKey)
+        }
+        if UserDefaults.standard.object(forKey: artNetPortStorageKey) != nil {
+            let p = UserDefaults.standard.integer(forKey: artNetPortStorageKey)
+            if p > 0 && p < 65536 { artNetIncomingPort = UInt16(p) }
+        }
+        if let h = UserDefaults.standard.string(forKey: artNetHostStorageKey), !h.isEmpty {
+            artNetIncomingHost = h
+        }
+        if UserDefaults.standard.object(forKey: artNetUnivStorageKey) != nil {
+            artNetIncomingUniverse = UInt16(UserDefaults.standard.integer(forKey: artNetUnivStorageKey))
+        }
+        if UserDefaults.standard.object(forKey: sacnPortStorageKey) != nil {
+            let p = UserDefaults.standard.integer(forKey: sacnPortStorageKey)
+            if p > 0 && p < 65536 { sacnIncomingPort = UInt16(p) }
+        }
+        if let h = UserDefaults.standard.string(forKey: sacnHostStorageKey), !h.isEmpty {
+            sacnIncomingHost = h
+        }
+        if UserDefaults.standard.object(forKey: sacnUnivStorageKey) != nil {
+            sacnIncomingUniverse = UInt16(UserDefaults.standard.integer(forKey: sacnUnivStorageKey))
+        }
+    }
+
+    func saveProtocolSettings() {
+        UserDefaults.standard.set(Int(oscIncomingPort), forKey: oscPortStorageKey)
+        UserDefaults.standard.set(oscIncomingHost, forKey: oscHostStorageKey)
+        UserDefaults.standard.set(selectedMidiInputDevice, forKey: midiDeviceStorageKey)
+        UserDefaults.standard.set(selectedMidiInputChannel, forKey: midiChannelStorageKey)
+        UserDefaults.standard.set(Int(artNetIncomingPort), forKey: artNetPortStorageKey)
+        UserDefaults.standard.set(artNetIncomingHost, forKey: artNetHostStorageKey)
+        UserDefaults.standard.set(Int(artNetIncomingUniverse), forKey: artNetUnivStorageKey)
+        UserDefaults.standard.set(Int(sacnIncomingPort), forKey: sacnPortStorageKey)
+        UserDefaults.standard.set(sacnIncomingHost, forKey: sacnHostStorageKey)
+        UserDefaults.standard.set(Int(sacnIncomingUniverse), forKey: sacnUnivStorageKey)
+    }
+
+    func updateOSCReceiver(port: UInt16, host: String) {
+        oscIncomingPort = port
+        oscIncomingHost = host
+        saveProtocolSettings()
+        startOSCListener(port: port, host: host)
+        SoundEffect.keyTap.play(with: soundPack)
+        log("📡 OSC Receiver updated: \(host):\(port)")
+    }
+
+    func updateMIDIReceiver(device: String, channel: Int) {
+        selectedMidiInputDevice = device
+        selectedMidiInputChannel = channel
+        saveProtocolSettings()
+        scanForBitchBoy()
+        SoundEffect.keyTap.play(with: soundPack)
+        log("🎹 MIDI Receiver: \(device) (\(channel == 0 ? "Omni" : "Ch \(channel)"))")
+    }
+
+    func updateArtNetReceiver(port: UInt16, host: String, universe: UInt16) {
+        artNetIncomingPort = port
+        artNetIncomingHost = host
+        artNetIncomingUniverse = universe
+        saveProtocolSettings()
+        if isArtNetListenerActive {
+            startArtNetListener(port: port)
+        }
+        SoundEffect.keyTap.play(with: soundPack)
+        log("💡 Art-Net Receiver: \(host):\(port) Univ:\(universe)")
+    }
+
+    func updatesACNReceiver(port: UInt16, host: String, universe: UInt16) {
+        sacnIncomingPort = port
+        sacnIncomingHost = host
+        sacnIncomingUniverse = universe
+        saveProtocolSettings()
+        if issACNListenerActive {
+            startsACNListener(port: port)
+        }
+        SoundEffect.keyTap.play(with: soundPack)
+        log("🌟 sACN Receiver: \(host):\(port) Univ:\(universe)")
+    }
+
+    func startOSCListener(port: UInt16 = 8000, host: String = "0.0.0.0") {
+        stopOSCListener()
+        oscIncomingPort = port
+        oscIncomingHost = host
+        do {
+            let params = NWParameters.udp
+            params.allowLocalEndpointReuse = true
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
+            let listener = try NWListener(using: params, on: nwPort)
+            listener.newConnectionHandler = { [weak self] conn in
+                conn.start(queue: .global())
+                Task { @MainActor in
+                    self?.receiveOSCPacket(conn: conn)
+                }
+            }
+            listener.stateUpdateHandler = { [weak self] state in
+                DispatchQueue.main.async {
+                    switch state {
+                    case .ready:
+                        self?.isOscListenerActive = true
+                        self?.recordProtocolEvent(type: .sys, command: "OSC UDP LISTENER ONLINE", details: "Listening on \(host):\(port)", rawHex: "")
+                    case .failed(let err):
+                        self?.isOscListenerActive = false
+                        self?.recordProtocolEvent(type: .sys, command: "OSC LISTENER FAILED", details: err.localizedDescription, rawHex: "")
+                    default:
+                        break
+                    }
+                }
+            }
+            listener.start(queue: .global())
+            self.oscListener = listener
+        } catch {
+            recordProtocolEvent(type: .sys, command: "OSC LISTENER ERROR", details: error.localizedDescription, rawHex: "")
+        }
+    }
+
+    // Inbound Art-Net Receiver
+    func startArtNetListener(port: UInt16 = 6454) {
+        stopArtNetListener()
+        artNetIncomingPort = port
+        do {
+            let params = NWParameters.udp
+            params.allowLocalEndpointReuse = true
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
+            let listener = try NWListener(using: params, on: nwPort)
+            listener.newConnectionHandler = { [weak self] conn in
+                conn.start(queue: .global())
+                Task { @MainActor in
+                    self?.receiveArtNetPacket(conn: conn)
+                }
+            }
+            listener.stateUpdateHandler = { [weak self] state in
+                DispatchQueue.main.async {
+                    switch state {
+                    case .ready:
+                        self?.isArtNetListenerActive = true
+                        self?.recordProtocolEvent(type: .sys, command: "ART-NET LISTENER ONLINE", details: "Listening on UDP :\(port)", rawHex: "")
+                    case .failed(let err):
+                        self?.isArtNetListenerActive = false
+                        self?.recordProtocolEvent(type: .sys, command: "ART-NET LISTENER FAILED", details: err.localizedDescription, rawHex: "")
+                    default:
+                        break
+                    }
+                }
+            }
+            listener.start(queue: .global())
+            self.artNetListener = listener
+        } catch {
+            recordProtocolEvent(type: .sys, command: "ART-NET LISTENER ERROR", details: error.localizedDescription, rawHex: "")
+        }
+    }
+
+    private func receiveArtNetPacket(conn: NWConnection) {
+        conn.receiveMessage { [weak self] data, _, _, error in
+            if let data = data, data.count >= 18 {
+                self?.parseAndRecordIncomingArtNet(data: data, remote: "\(conn.endpoint)")
+            }
+            if error == nil {
+                self?.receiveArtNetPacket(conn: conn)
+            }
+        }
+    }
+
+    private func parseAndRecordIncomingArtNet(data: Data, remote: String) {
+        guard data.count >= 18,
+              data[0] == 0x41 && data[1] == 0x72 && data[2] == 0x74 && data[3] == 0x2D &&
+              data[4] == 0x4E && data[5] == 0x65 && data[6] == 0x74 && data[7] == 0x00 else {
+            return
+        }
+        let opCode = UInt16(data[8]) | (UInt16(data[9]) << 8)
+        if opCode == 0x5000 {
+            let universe = UInt16(data[14]) | (UInt16(data[15]) << 8)
+            let length = (Int(data[16]) << 8) | Int(data[17])
+            let dmxData = data.subdata(in: 18..<min(18 + length, data.count))
+            let firstChans = dmxData.prefix(6).map { String($0) }.joined(separator: ", ")
+            let hex = data.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " ")
+            DispatchQueue.main.async {
+                self.recordProtocolEvent(
+                    type: .dmx,
+                    command: "ART-NET DMX RX (Univ \(universe))",
+                    details: "\(length) Chans [\(firstChans)...]",
+                    rawHex: hex,
+                    channel: remote
+                )
+            }
+        }
+    }
+
+    func stopArtNetListener() {
+        artNetListener?.cancel()
+        artNetListener = nil
+        isArtNetListenerActive = false
+    }
+
+    // Inbound sACN Receiver
+    func startsACNListener(port: UInt16 = 5568) {
+        stopsACNListener()
+        sacnIncomingPort = port
+        do {
+            let params = NWParameters.udp
+            params.allowLocalEndpointReuse = true
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
+            let listener = try NWListener(using: params, on: nwPort)
+            listener.newConnectionHandler = { [weak self] conn in
+                conn.start(queue: .global())
+                Task { @MainActor in
+                    self?.receivesACNPacket(conn: conn)
+                }
+            }
+            listener.stateUpdateHandler = { [weak self] state in
+                DispatchQueue.main.async {
+                    switch state {
+                    case .ready:
+                        self?.issACNListenerActive = true
+                        self?.recordProtocolEvent(type: .sys, command: "sACN E1.31 LISTENER ONLINE", details: "Listening on UDP :\(port)", rawHex: "")
+                    case .failed(let err):
+                        self?.issACNListenerActive = false
+                        self?.recordProtocolEvent(type: .sys, command: "sACN LISTENER FAILED", details: err.localizedDescription, rawHex: "")
+                    default:
+                        break
+                    }
+                }
+            }
+            listener.start(queue: .global())
+            self.sacnListener = listener
+        } catch {
+            recordProtocolEvent(type: .sys, command: "sACN LISTENER ERROR", details: error.localizedDescription, rawHex: "")
+        }
+    }
+
+    private func receivesACNPacket(conn: NWConnection) {
+        conn.receiveMessage { [weak self] data, _, _, error in
+            if let data = data, data.count >= 126 {
+                self?.parseAndRecordIncomingsACN(data: data, remote: "\(conn.endpoint)")
+            }
+            if error == nil {
+                self?.receivesACNPacket(conn: conn)
+            }
+        }
+    }
+
+    private func parseAndRecordIncomingsACN(data: Data, remote: String) {
+        guard data.count >= 126 else { return }
+        let universe = (UInt16(data[113]) << 8) | UInt16(data[114])
+        let priority = data[108]
+        let hex = data.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " ")
+        DispatchQueue.main.async {
+            self.recordProtocolEvent(
+                type: .dmx,
+                command: "sACN E1.31 RX (Univ \(universe))",
+                details: "Priority: \(priority) | Remote: \(remote)",
+                rawHex: hex,
+                channel: remote
+            )
+        }
+    }
+
+    func stopsACNListener() {
+        sacnListener?.cancel()
+        sacnListener = nil
+        issACNListenerActive = false
+    }
+
+    private func receiveOSCPacket(conn: NWConnection) {
+        conn.receiveMessage { [weak self] data, context, isComplete, error in
+            if let data = data, !data.isEmpty {
+                self?.parseAndRecordIncomingOSC(data: data, remote: "\(conn.endpoint)")
+            }
+            if error == nil {
+                self?.receiveOSCPacket(conn: conn)
+            }
+        }
+    }
+
+    private func parseAndRecordIncomingOSC(data: Data, remote: String) {
+        let hex = data.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " ")
+        if let nullIdx = data.firstIndex(of: 0),
+           let addr = String(data: data[..<nullIdx], encoding: .utf8),
+           addr.starts(with: "/") {
+            var details = "Remote: \(remote)"
+            let remainder = data.subdata(in: min(nullIdx + 1, data.count)..<data.count)
+            if let commaIdx = remainder.firstIndex(of: 0x2C) {
+                if let typeNull = remainder[commaIdx...].firstIndex(of: 0),
+                   let typeTag = String(data: remainder[commaIdx..<typeNull], encoding: .utf8) {
+                    details += " | Tags: \(typeTag)"
+                }
+            }
+            DispatchQueue.main.async {
+                self.recordProtocolEvent(type: .oscIn, command: addr, details: details, rawHex: hex, channel: remote)
+            }
+        } else {
+            let str = String(data: data, encoding: .utf8) ?? "Binary [\(data.count) bytes]"
+            DispatchQueue.main.async {
+                self.recordProtocolEvent(type: .oscIn, command: "UDP PACKET", details: str, rawHex: hex, channel: remote)
+            }
+        }
+    }
+
+    func stopOSCListener() {
+        oscListener?.cancel()
+        oscListener = nil
+        isOscListenerActive = false
+    }
+
+    func recordProtocolEvent(type: ProtocolEvent.EventType, command: String, details: String, rawHex: String = "", channel: String = "") {
+        guard !isProtocolPaused else { return }
+        totalPacketsReceived += 1
+        lastPacketTime = Date()
+        switch type {
+        case .midiIn, .midiOut: midiPacketsCount += 1
+        case .oscIn, .oscOut: oscPacketsCount += 1
+        case .dmx: dmxPacketsCount += 1
+        case .msc: mscPacketsCount += 1
+        case .sys, .all: break
+        }
+
+        let entry = ProtocolEvent(
+            timestamp: Date(),
+            type: type,
+            channelOrTarget: channel,
+            command: command,
+            details: details,
+            rawHex: rawHex
+        )
+        protocolEvents.insert(entry, at: 0)
+        if protocolEvents.count > 300 {
+            protocolEvents.removeLast()
+        }
+    }
+
+    func clearProtocolLogs() {
+        protocolEvents.removeAll()
+        SoundEffect.keyTap.play(with: soundPack)
+        log("🗑 Protocol logs cleared")
+    }
+
+    func toggleProtocolLoggingPaused() {
+        isProtocolPaused.toggle()
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    func exportProtocolLogsToClipboard() {
+        let df = DateFormatter()
+        df.dateFormat = "HH:mm:ss.SSS"
+        let text = protocolEvents.reversed().map {
+            "[\(df.string(from: $0.timestamp))] [\($0.type.rawValue)] \($0.channelOrTarget) \($0.command) | \($0.details) \($0.rawHex.isEmpty ? "" : "[\($0.rawHex)]")"
+        }.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        SoundEffect.presetSwitch.play(with: soundPack)
+        log("📋 Copied \(protocolEvents.count) protocol entries to clipboard")
+    }
+
+    func injectTestProtocolPacket(type: ProtocolEvent.EventType = .oscIn) {
+        SoundEffect.keyTap.play(with: soundPack)
+        switch type {
+        case .midiIn:
+            recordProtocolEvent(type: .midiIn, command: "NOTE ON #60 (C4)", details: "Vel: 127 [100%]", rawHex: "90 3C 7F", channel: "Ch:1")
+        case .midiOut:
+            recordProtocolEvent(type: .midiOut, command: "CC #1 (MOD WHEEL)", details: "Value: 64 [50%]", rawHex: "B0 01 40", channel: "Ch:1")
+        case .oscIn:
+            recordProtocolEvent(type: .oscIn, command: "/qlab/cue/1/start", details: "Type: ,f | Arg: 1.0", rawHex: "2F 71 6C 61 62", channel: "127.0.0.1:53000")
+        case .oscOut:
+            recordProtocolEvent(type: .oscOut, command: "/live/track/1/volume", details: "Arg: 0.85", rawHex: "2F 6C 69 76 65", channel: "\(customOSCHost):\(customOSCPort)")
+        case .dmx:
+            recordProtocolEvent(type: .dmx, command: "ART-NET DMX DUMP", details: "Univ: 0 | Chans 1..8: [255, 128, 0, 255...]", rawHex: "41 72 74 2D 4E 65 74", channel: "\(artNetHost):6454")
+        case .msc:
+            recordProtocolEvent(type: .msc, command: "MSC GO", details: "Cue: 101.5 | Q-List: 1", rawHex: "F0 7F 01 02 01 01 F7", channel: "All Call")
+        case .sys, .all:
+            recordProtocolEvent(type: .sys, command: "HEARTBEAT PING", details: "CoreMIDI Engine Latency: 0.4ms", rawHex: "", channel: "System")
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // INCOMING MIDI PARSER
     // ------------------------------------------------------------------------
     private func handleMIDIMessage(status: UInt8, data1: UInt8, data2: UInt8) {
+        let channelNum = Int((status & 0x0F) + 1)
+        if selectedMidiInputChannel > 0 && channelNum != selectedMidiInputChannel {
+            return
+        }
+
         // Forward physical BitchBoy MIDI input to Virtual Out & selected external programs!
         routeIncomingMIDIToTargets(status: status, data1: data1, data2: data2, isFromHardware: true)
 
@@ -3903,6 +4615,15 @@ final class BitchBoyEngine: ObservableObject {
         let isNoteOn = (msgType == 0x90) && (data2 > 0)
         let isNoteOff = (msgType == 0x80) || ((msgType == 0x90) && (data2 == 0))
         let isCC = (msgType == 0xB0)
+        let channelStr = "Ch:\((status & 0x0F) + 1)"
+
+        if isNoteOn {
+            recordProtocolEvent(type: .midiIn, command: "NOTE ON #\(data1) (\(midiNoteName(data1)))", details: "Velocity: \(data2) [\(Int(round(Double(data2)/127.0*100)))%]", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+        } else if isNoteOff {
+            recordProtocolEvent(type: .midiIn, command: "NOTE OFF #\(data1) (\(midiNoteName(data1)))", details: "Velocity: 0", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+        } else if isCC {
+            recordProtocolEvent(type: .midiIn, command: "CC #\(data1)", details: "Value: \(data2)", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+        }
 
         guard let idx = controls.firstIndex(where: {
             if isCC { return ($0.kind == .vfader || $0.kind == .hfader || $0.kind == .knob) && $0.number == data1 }
@@ -4133,26 +4854,58 @@ final class BitchBoyEngine: ObservableObject {
     static let consoleBaseWidth: CGFloat = 1566
     static let consoleBaseHeight: CGFloat = 840
 
+    var totalLeftWingWidth: CGFloat {
+        guard !leftWingModules.isEmpty || isRearrangingModules else { return 0 }
+        return leftWingWidth + 14 + 10 // Left wing ScrollView (leftWingWidth) + Divider (14) + Spacing (10)
+    }
+
+    var centerConsoleWidth: CGFloat {
+        894
+    }
+
+    var totalRightWingWidth: CGFloat {
+        guard !rightWingModules.isEmpty || isRearrangingModules else { return 0 }
+        return 10 + 14 + rightWingWidth // Spacing (10) + Divider (14) + Right wing ScrollView (rightWingWidth)
+    }
+
+    var chassisContentWidth: CGFloat {
+        totalLeftWingWidth + centerConsoleWidth + totalRightWingWidth
+    }
+
+    var chassisTotalWidth: CGFloat {
+        chassisContentWidth + 44 // 22 left bezel padding + 22 right bezel padding (clearance for corner screws)
+    }
+
+    var effectiveConsoleWidth: CGFloat {
+        chassisTotalWidth + 32 // 16 left window padding + 16 right window padding
+    }
+
     var leftWingContentHeight: CGFloat {
         guard !leftWingModules.isEmpty || isRearrangingModules else { return 0 }
-        let modsH = leftWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 10 }
-        return modsH + (isRearrangingModules ? 60 : 0)
+        let modsH = leftWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
+        if leftWingModules.isEmpty && isRearrangingModules {
+            return 140
+        }
+        return modsH + 20
     }
 
     var rightWingContentHeight: CGFloat {
         guard !rightWingModules.isEmpty || isRearrangingModules else { return 0 }
-        let modsH = rightWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 10 }
-        return modsH + (isRearrangingModules ? 60 : 0)
+        let modsH = rightWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
+        if rightWingModules.isEmpty && isRearrangingModules {
+            return 140
+        }
+        return modsH + 20
     }
 
     var centerDeckHeight: CGFloat {
-        530
+        630
     }
 
     var bottomRackContentHeight: CGFloat {
         guard !bottomRackModules.isEmpty || isRearrangingModules else { return 0 }
         let maxRackH = bottomRackModules.map { moduleCustomHeights[$0] ?? $0.defaultSlotHeight }.max() ?? 240
-        return maxRackH + 52
+        return maxRackH + 95
     }
 
     var centerTotalHeight: CGFloat {
@@ -4162,11 +4915,11 @@ final class BitchBoyEngine: ObservableObject {
     // Exact physical content height of the faceplate columns (encompassing all wings, deck, and bottom expansion rack)
     var chassisContentHeight: CGFloat {
         let maxColumnH = max(centerTotalHeight, max(leftWingContentHeight, rightWingContentHeight))
-        return max(530, maxColumnH)
+        return max(630, maxColumnH)
     }
 
     var effectiveConsoleHeight: CGFloat {
-        let faceplateTotalH = chassisContentHeight + 36 // 18px top & 18px bottom padding inside chassis
+        let faceplateTotalH = chassisContentHeight + 40 // 20px top & 20px bottom padding inside chassis
         let totalWindowH = faceplateTotalH + 50 + 12 + 28 // Top nav (50) + spacing (12) + outer window vertical padding (28)
         return totalWindowH
     }
@@ -4233,8 +4986,9 @@ final class BitchBoyEngine: ObservableObject {
         if let badgeIcon = NSImage(named: "BitchBoyBadgeIcon") {
             NSApplication.shared.applicationIconImage = badgeIcon
         }
-        let minW = Self.consoleBaseWidth * 0.15
+        let minW = effectiveConsoleWidth * 0.15
         let minH = effectiveConsoleHeight * 0.15
+        let baseSize = NSSize(width: effectiveConsoleWidth, height: effectiveConsoleHeight)
         let detachedWinSet = Set(moduleWindows.values)
         for (mod, win) in moduleWindows {
             win.level = isModuleWindowTopMost(mod) ? .floating : .normal
@@ -4248,7 +5002,7 @@ final class BitchBoyEngine: ObservableObject {
             window.title = "BitchManager"
             window.level = isWindowAlwaysOnTop ? .floating : .normal
             window.contentMinSize = NSSize(width: minW, height: minH)
-            window.contentAspectRatio = NSSize(width: Self.consoleBaseWidth, height: effectiveConsoleHeight)
+            window.contentResizeIncrements = NSSize(width: 1.0, height: 1.0)
         }
     }
 
@@ -4708,7 +5462,7 @@ final class BitchBoyEngine: ObservableObject {
 
     func resizeMainWindowToScale(_ scale: CGFloat) {
         let clamped = min(2.2, max(0.15, scale))
-        let targetW = round(Self.consoleBaseWidth * clamped)
+        let targetW = round(effectiveConsoleWidth * clamped)
         let targetH = round(effectiveConsoleHeight * clamped)
         DispatchQueue.main.async {
             let detachedWinSet = Set(self.moduleWindows.values)
@@ -4716,8 +5470,8 @@ final class BitchBoyEngine: ObservableObject {
                 if detachedWinSet.contains(window) { continue }
                 let className = String(describing: type(of: window))
                 if className.contains("StatusBar") || className.contains("Menu") { continue }
-                window.contentMinSize = NSSize(width: Self.consoleBaseWidth * 0.15, height: self.effectiveConsoleHeight * 0.15)
-                window.contentAspectRatio = NSSize(width: Self.consoleBaseWidth, height: self.effectiveConsoleHeight)
+                window.contentMinSize = NSSize(width: self.effectiveConsoleWidth * 0.15, height: self.effectiveConsoleHeight * 0.15)
+                window.contentResizeIncrements = NSSize(width: 1.0, height: 1.0)
                 window.setContentSize(NSSize(width: targetW, height: targetH))
             }
         }
@@ -4756,32 +5510,59 @@ final class BitchBoyEngine: ObservableObject {
             bottomRackModules = [.reactiveKeyFX]
         }
 
-        // Ensure all 5 modules are accounted for without duplicates
+        // Strip any hardware modules from expansion bays (hardware controls belong strictly on the faceplate)
+        leftWingModules.removeAll(where: { $0.isHardwareModule })
+        rightWingModules.removeAll(where: { $0.isHardwareModule })
+        bottomRackModules.removeAll(where: { $0.isHardwareModule })
+
+        // Ensure all studio expansion modules are accounted for without duplicates
         var placed = Set(leftWingModules + rightWingModules + bottomRackModules)
-        for m in StudioModuleID.allCases where !placed.contains(m) {
+        for m in StudioModuleID.expansionModules where !placed.contains(m) {
             bottomRackModules.append(m)
             placed.insert(m)
         }
+        moduleOrder = leftWingModules + rightWingModules + bottomRackModules
 
         // Load Custom Heights
         if let hData = UserDefaults.standard.data(forKey: moduleHeightsStorageKey),
            let decodedHeights = try? JSONDecoder().decode([String: Double].self, from: hData) {
             for (key, val) in decodedHeights {
                 if let mod = StudioModuleID(rawValue: key) {
-                    moduleCustomHeights[mod] = CGFloat(val)
+                    var heightVal = CGFloat(val)
+                    if mod == .customFXStudio && heightVal < 380 {
+                        heightVal = 490
+                    }
+                    moduleCustomHeights[mod] = heightVal
                 }
             }
         }
 
-        // Load Custom Widths
+        // Load Custom Widths (enforce safe min 380 so modules never overlap)
         if let wData = UserDefaults.standard.data(forKey: moduleWidthsStorageKey),
            let decodedWidths = try? JSONDecoder().decode([String: Double].self, from: wData) {
             for (key, val) in decodedWidths {
                 if let mod = StudioModuleID(rawValue: key) {
-                    moduleCustomWidths[mod] = CGFloat(val)
+                    moduleCustomWidths[mod] = max(380, CGFloat(val))
                 }
             }
         }
+
+        // Load Wing Widths with safe minimum of 380px so studio modules never clip horizontally
+        let savedLW = UserDefaults.standard.double(forKey: "BitchBoy_LeftWingWidth_v2")
+        if savedLW > 0 {
+            leftWingWidth = max(380, CGFloat(savedLW))
+        } else {
+            leftWingWidth = 380
+        }
+        UserDefaults.standard.set(Double(leftWingWidth), forKey: "BitchBoy_LeftWingWidth_v2")
+
+        let savedRW = UserDefaults.standard.double(forKey: "BitchBoy_RightWingWidth_v2")
+        if savedRW > 0 {
+            rightWingWidth = max(380, CGFloat(savedRW))
+        } else {
+            rightWingWidth = 380
+        }
+        UserDefaults.standard.set(Double(rightWingWidth), forKey: "BitchBoy_RightWingWidth_v2")
 
         moduleOrder = leftWingModules + rightWingModules + bottomRackModules
     }
@@ -4828,6 +5609,7 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     func currentZone(of module: StudioModuleID) -> ModuleZone {
         if detachedModules.contains(module) { return .floating }
+        if module.isHardwareModule { return .floating }
         if leftWingModules.contains(module) { return .leftWing }
         if rightWingModules.contains(module) { return .rightWing }
         if bottomRackModules.contains(module) { return .bottomRack }
@@ -4838,6 +5620,17 @@ final class BitchBoyEngine: ObservableObject {
         if spotlightModule == module {
             withAnimation { spotlightModule = nil }
         }
+        if module.isHardwareModule {
+            // Hardware controls reside strictly on the faceplate surface or float as pop-out windows.
+            // Never dock or duplicate into the expansion bay / wings!
+            if zone == .floating {
+                popOutModuleToWindow(module)
+            } else {
+                dockModuleBackFromWindow(module)
+            }
+            return
+        }
+
         leftWingModules.removeAll(where: { $0 == module })
         rightWingModules.removeAll(where: { $0 == module })
         bottomRackModules.removeAll(where: { $0 == module })
@@ -4923,12 +5716,59 @@ final class BitchBoyEngine: ObservableObject {
     func cycleModuleSizePreset(_ module: StudioModuleID) {
         let currentH = moduleCustomHeights[module] ?? module.defaultSlotHeight
         let nextH: CGFloat
-        if currentH < 240 {
-            nextH = 340
-        } else if currentH < 380 {
-            nextH = 480
-        } else {
-            nextH = 210
+        switch module {
+        case .customFXStudio:
+            if currentH < 380 { nextH = 490 }
+            else if currentH < 560 { nextH = 640 }
+            else { nextH = 320 }
+        case .reactiveKeyFX:
+            if currentH < 260 { nextH = 320 }
+            else if currentH < 380 { nextH = 440 }
+            else { nextH = 220 }
+        case .midiRouter:
+            if currentH < 340 { nextH = 440 }
+            else if currentH < 500 { nextH = 580 }
+            else { nextH = 280 }
+        case .memorySlots:
+            if currentH < 200 { nextH = 240 }
+            else if currentH < 300 { nextH = 340 }
+            else { nextH = 180 }
+        case .showControl:
+            if currentH < 360 { nextH = 480 }
+            else if currentH < 540 { nextH = 620 }
+            else { nextH = 300 }
+        case .terminal:
+            if currentH < 250 { nextH = 340 }
+            else if currentH < 400 { nextH = 480 }
+            else { nextH = 220 }
+        case .keyGrid8x4:
+            if currentH < 230 { nextH = 260 }
+            else if currentH < 300 { nextH = 340 }
+            else { nextH = 210 }
+        case .keyStrip1x8:
+            if currentH < 130 { nextH = 150 }
+            else if currentH < 180 { nextH = 200 }
+            else { nextH = 120 }
+        case .keypad3x3:
+            if currentH < 300 { nextH = 350 }
+            else if currentH < 400 { nextH = 450 }
+            else { nextH = 270 }
+        case .verticalFaders:
+            if currentH < 220 { nextH = 260 }
+            else if currentH < 300 { nextH = 340 }
+            else { nextH = 200 }
+        case .horizontalFaders:
+            if currentH < 170 { nextH = 200 }
+            else if currentH < 240 { nextH = 280 }
+            else { nextH = 150 }
+        case .rotaryKnobs:
+            if currentH < 280 { nextH = 340 }
+            else if currentH < 380 { nextH = 420 }
+            else { nextH = 250 }
+        case .colorPickerHUD:
+            if currentH < 320 { nextH = 380 }
+            else if currentH < 440 { nextH = 480 }
+            else { nextH = 290 }
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             moduleCustomHeights[module] = nextH
@@ -4939,19 +5779,85 @@ final class BitchBoyEngine: ObservableObject {
 
     func moduleSizePresetLabel(_ module: StudioModuleID) -> String {
         let h = moduleCustomHeights[module] ?? module.defaultSlotHeight
-        if h <= 235 { return "COMPACT" }
-        if h <= 375 { return "STANDARD" }
-        return "EXPANDED"
+        switch module {
+        case .customFXStudio:
+            if h <= 350 { return "COMPACT" }
+            if h <= 540 { return "STANDARD" }
+            return "EXPANDED"
+        case .reactiveKeyFX:
+            if h <= 250 { return "COMPACT" }
+            if h <= 360 { return "STANDARD" }
+            return "EXPANDED"
+        case .midiRouter:
+            if h <= 320 { return "COMPACT" }
+            if h <= 480 { return "STANDARD" }
+            return "EXPANDED"
+        case .memorySlots:
+            if h <= 200 { return "COMPACT" }
+            if h <= 280 { return "STANDARD" }
+            return "EXPANDED"
+        case .showControl:
+            if h <= 340 { return "COMPACT" }
+            if h <= 520 { return "STANDARD" }
+            return "EXPANDED"
+        case .terminal:
+            if h <= 240 { return "COMPACT" }
+            if h <= 380 { return "STANDARD" }
+            return "EXPANDED"
+        case .keyGrid8x4:
+            if h <= 230 { return "COMPACT" }
+            if h <= 300 { return "STANDARD" }
+            return "EXPANDED"
+        case .keyStrip1x8:
+            if h <= 130 { return "COMPACT" }
+            if h <= 170 { return "STANDARD" }
+            return "EXPANDED"
+        case .keypad3x3:
+            if h <= 300 { return "COMPACT" }
+            if h <= 380 { return "STANDARD" }
+            return "EXPANDED"
+        case .verticalFaders:
+            if h <= 220 { return "COMPACT" }
+            if h <= 290 { return "STANDARD" }
+            return "EXPANDED"
+        case .horizontalFaders:
+            if h <= 170 { return "COMPACT" }
+            if h <= 230 { return "STANDARD" }
+            return "EXPANDED"
+        case .rotaryKnobs:
+            if h <= 280 { return "COMPACT" }
+            if h <= 360 { return "STANDARD" }
+            return "EXPANDED"
+        case .colorPickerHUD:
+            if h <= 320 { return "COMPACT" }
+            if h <= 420 { return "STANDARD" }
+            return "EXPANDED"
+        }
     }
 
     func isModuleExpanded(_ module: StudioModuleID, isSpotlight: Bool = false) -> Bool {
         if isSpotlight { return true }
         let h = moduleCustomHeights[module] ?? module.defaultSlotHeight
-        return h >= 375
+        switch module {
+        case .customFXStudio: return h > 540
+        case .reactiveKeyFX: return h > 360
+        case .midiRouter: return h > 480
+        case .memorySlots: return h > 280
+        case .showControl: return h > 520
+        case .terminal: return h > 380
+        case .keyGrid8x4: return h > 300
+        case .keyStrip1x8: return h > 170
+        case .keypad3x3: return h > 380
+        case .verticalFaders: return h > 290
+        case .horizontalFaders: return h > 230
+        case .rotaryKnobs: return h > 360
+        case .colorPickerHUD: return h > 420
+        }
     }
 
     func moduleTextScale(_ module: StudioModuleID, isSpotlight: Bool = false) -> CGFloat {
-        return isModuleExpanded(module, isSpotlight: isSpotlight) ? 2.0 : 1.0
+        if isSpotlight { return 1.45 }
+        return 1.22
     }
 
     func toggleSpotlightModule(_ module: StudioModuleID) {
@@ -4976,6 +5882,7 @@ final class BitchBoyEngine: ObservableObject {
 
     func swapModules(_ first: StudioModuleID, _ second: StudioModuleID) {
         guard first != second else { return }
+        guard !first.isHardwareModule && !second.isHardwareModule else { return }
         let zone1 = currentZone(of: first)
         let zone2 = currentZone(of: second)
 
@@ -5055,14 +5962,14 @@ final class BitchBoyEngine: ObservableObject {
     func cycleModuleWidthPreset(_ module: StudioModuleID) {
         let currentW = moduleCustomWidths[module] ?? 435
         let nextW: CGFloat
-        if currentW < 360 {
-            nextW = 435 // Half rack
-        } else if currentW < 520 {
-            nextW = 620 // Wide
-        } else if currentW < 750 {
-            nextW = 894 // Full rack
+        if currentW < 410 {
+            nextW = 435 // Half rack (435px)
+        } else if currentW < 550 {
+            nextW = 640 // Wide (640px)
+        } else if currentW < 800 {
+            nextW = 894 // Full rack (894px)
         } else {
-            nextW = 320 // Compact
+            nextW = 380 // Compact (380px)
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             moduleCustomWidths[module] = nextW
@@ -5073,9 +5980,9 @@ final class BitchBoyEngine: ObservableObject {
 
     func moduleWidthPresetLabel(_ module: StudioModuleID) -> String {
         guard let w = moduleCustomWidths[module] else { return "HALF" }
-        if w <= 340 { return "COMPACT" }
-        if w <= 480 { return "HALF" }
-        if w <= 700 { return "WIDE" }
+        if w <= 390 { return "COMPACT" }
+        if w <= 500 { return "HALF" }
+        if w <= 750 { return "WIDE" }
         return "FULL"
     }
 
@@ -5088,8 +5995,8 @@ final class BitchBoyEngine: ObservableObject {
             moduleOrder = leftWingModules + rightWingModules + bottomRackModules
             moduleCustomHeights.removeAll()
             moduleCustomWidths.removeAll()
-            leftWingWidth = 274
-            rightWingWidth = 274
+            leftWingWidth = 380
+            rightWingWidth = 380
         }
         saveModuleLayout()
         saveModuleSizes()
@@ -5113,19 +6020,21 @@ final class BitchBoyEngine: ObservableObject {
         }
 
         let defaultSize = module.idealWindowSize
-        let win = NSWindow(
+        let win = DetachedModuleWindow(
             contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        win.moduleID = module
+        win.engine = self
         win.title = "BitchManager // \(module.rawValue)"
         win.appearance = NSAppearance(named: .darkAqua)
         win.backgroundColor = NSColor(calibratedRed: 0.02, green: 0.06, blue: 0.05, alpha: 1.0)
         win.isReleasedWhenClosed = false
         win.level = isModuleWindowTopMost(module) ? .floating : .normal
         win.contentMinSize = module.minWindowSize
-        win.contentAspectRatio = defaultSize
+        win.contentResizeIncrements = NSSize(width: 1.0, height: 1.0)
         win.center()
 
         let delegate = ModuleWindowCloseDelegate(module: module, engine: self)
@@ -5150,9 +6059,31 @@ final class BitchBoyEngine: ObservableObject {
         moduleWindowDelegates.removeValue(forKey: module)
         withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
             _ = detachedModules.remove(module)
+            // If it's a studio expansion module, ensure it is re-docked into its expansion bay
+            if !module.isHardwareModule {
+                if !leftWingModules.contains(module) && !rightWingModules.contains(module) && !bottomRackModules.contains(module) {
+                    switch module {
+                    case .showControl, .memorySlots:
+                        leftWingModules.append(module)
+                    case .midiRouter, .customFXStudio:
+                        rightWingModules.append(module)
+                    default:
+                        bottomRackModules.append(module)
+                    }
+                    moduleOrder = leftWingModules + rightWingModules + bottomRackModules
+                    saveModuleLayout()
+                }
+            }
         }
         SoundEffect.knobTick.play(with: soundPack)
-        log("↙ Docked '\(module.rawValue)' back into main console")
+        log("↙ Re-docked '\(module.rawValue)' back into console")
+    }
+
+    func dockAllModules() {
+        for mod in StudioModuleID.allCases {
+            dockModuleBackFromWindow(mod)
+        }
+        log("↙ All modules docked back into main console")
     }
 
     func setManualZoom(_ newScale: CGFloat) {
@@ -5667,6 +6598,13 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func sendOSC(host: String, port: UInt16, address: String) {
+        recordProtocolEvent(
+            type: .oscOut,
+            command: address,
+            details: "Target: \(host):\(port)",
+            rawHex: address.data(using: .utf8)?.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ") ?? "",
+            channel: "\(host):\(port)"
+        )
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
         let conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .udp)
         conn.start(queue: .global())
@@ -5966,7 +6904,7 @@ struct HardwareKeyCap: View, Equatable {
                 // Labels & Center Action Cross / QWERTY Shortcut Badge
                 VStack(spacing: 0) {
                     Text(item.customName.isEmpty ? item.label : item.customName)
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
                         .foregroundColor(isLit ? .white : Color(white: 0.88))
                         .padding(.top, 2)
                         .lineLimit(1)
@@ -6013,7 +6951,7 @@ struct HardwareKeyCap: View, Equatable {
                     Spacer(minLength: 0)
 
                     Text("N\(item.number)")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(isLit ? .white.opacity(0.95) : Color(white: 0.78))
                         .padding(.bottom, 2)
                 }
@@ -6120,7 +7058,13 @@ struct HardwareVerticalFader: View, Equatable {
         .padding(.horizontal, 2)
         .background(isSelected ? Color.white.opacity(0.06) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 5))
-        .onTapGesture { onSelect() }
+        .onTapGesture(count: 2) {
+            onValueChange(0)
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
+        }
+        .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to reset 0)")
     }
 }
 
@@ -6202,7 +7146,13 @@ struct HardwareHorizontalFader: View, Equatable {
         .padding(.horizontal, 4)
         .background(isSelected ? Color.white.opacity(0.06) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 5))
-        .onTapGesture { onSelect() }
+        .onTapGesture(count: 2) {
+            onValueChange(0)
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
+        }
+        .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to reset 0)")
     }
 }
 
@@ -6231,7 +7181,7 @@ struct HardwareKnob: View, Equatable {
                             endRadius: 16
                         )
                     )
-                    .frame(width: 32, height: 32)
+                    .frame(width: 38, height: 38)
                     .overlay(
                         Circle().stroke(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color.white.opacity(0.2), lineWidth: isSelected ? 1.8 : 1.0)
                     )
@@ -6266,7 +7216,13 @@ struct HardwareKnob: View, Equatable {
         }
         .frame(width: 58)
         .padding(2)
-        .onTapGesture { onSelect() }
+        .onTapGesture(count: 2) {
+            onValueChange(64) // Center knob to 64!
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
+        }
+        .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to center 64)")
     }
 }
 
@@ -6281,34 +7237,61 @@ struct WindowLevelAndSizeAccessor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async {
-            configureWindow(view.window)
+        DispatchQueue.main.async { [weak view] in
+            guard let win = view?.window else { return }
+            configureWindow(win)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let win = nsView.window {
-            let targetLevel: NSWindow.Level = isAlwaysOnTop ? .floating : .normal
-            if win.level != targetLevel {
-                win.level = targetLevel
-            }
-            if win.contentAspectRatio != baseSize {
-                win.contentAspectRatio = baseSize
-                let minContentW = baseSize.width * minScale
-                let minContentH = baseSize.height * minScale
-                win.contentMinSize = NSSize(width: minContentW, height: minContentH)
-            }
+        guard let win = nsView.window else { return }
+        let targetLevel: NSWindow.Level = isAlwaysOnTop ? .floating : .normal
+        if win.level != targetLevel {
+            win.level = targetLevel
+        }
+        win.contentResizeIncrements = NSSize(width: 1.0, height: 1.0)
+        let targetMin = NSSize(width: max(380, baseSize.width * minScale), height: max(260, baseSize.height * minScale))
+        if win.contentMinSize != targetMin {
+            win.contentMinSize = targetMin
         }
     }
 
-    private func configureWindow(_ window: NSWindow?) {
-        guard let window = window else { return }
+    private func configureWindow(_ window: NSWindow) {
         window.level = isAlwaysOnTop ? .floating : .normal
-        let minContentW = baseSize.width * minScale
-        let minContentH = baseSize.height * minScale
-        window.contentMinSize = NSSize(width: minContentW, height: minContentH)
-        window.contentAspectRatio = baseSize
+        window.contentResizeIncrements = NSSize(width: 1.0, height: 1.0)
+        window.contentMinSize = NSSize(width: max(380, baseSize.width * minScale), height: max(260, baseSize.height * minScale))
+    }
+}
+
+final class DetachedModuleWindow: NSWindow {
+    var moduleID: StudioModuleID?
+    weak var engine: BitchBoyEngine?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection([.deviceIndependentFlagsMask]) == .command,
+           event.charactersIgnoringModifiers == "w" {
+            if let mod = moduleID, let eng = engine {
+                eng.dockModuleBackFromWindow(mod, fromWindowClose: false)
+                return true
+            }
+            self.performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.intersection([.deviceIndependentFlagsMask]) == .command,
+           event.charactersIgnoringModifiers == "w" {
+            if let mod = moduleID, let eng = engine {
+                eng.dockModuleBackFromWindow(mod, fromWindowClose: false)
+                return
+            }
+            self.performClose(nil)
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 
@@ -6334,7 +7317,8 @@ struct ModuleSlotDropDelegate: DropDelegate {
     let engine: BitchBoyEngine
 
     func performDrop(info: DropInfo) -> Bool {
-        if let dragged = engine.draggingModule, dragged != targetModule {
+        guard !targetModule.isHardwareModule else { return false }
+        if let dragged = engine.draggingModule, dragged != targetModule, !dragged.isHardwareModule {
             engine.swapModules(dragged, targetModule)
         }
         engine.draggingModule = nil
@@ -6342,7 +7326,8 @@ struct ModuleSlotDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        guard let dragged = engine.draggingModule, dragged != targetModule else { return }
+        guard !targetModule.isHardwareModule else { return }
+        guard let dragged = engine.draggingModule, dragged != targetModule, !dragged.isHardwareModule else { return }
         engine.swapModules(dragged, targetModule)
     }
 
@@ -6356,7 +7341,7 @@ struct ZoneDropDelegate: DropDelegate {
     let engine: BitchBoyEngine
 
     func performDrop(info: DropInfo) -> Bool {
-        if let dragged = engine.draggingModule {
+        if let dragged = engine.draggingModule, !dragged.isHardwareModule {
             engine.moveModuleToZone(dragged, zone: targetZone)
         }
         engine.draggingModule = nil
@@ -6388,9 +7373,9 @@ struct ContentView: View {
     @State private var inspectorTab: Int = 0 // 0 = LEDs, 1 = QWERTY
     @State private var isEditingNameBox: Bool = false
     @FocusState private var isNameFieldFocused: Bool
-    @State private var jigglePhase: Bool = false
     @State private var resizingModule: StudioModuleID? = nil
-        @State private var dragInitialHeight: CGFloat = 0
+    @State private var dragInitialHeight: CGFloat = 0
+    @State private var terminalQuickCommand: String = ""
 
     func currentScale(for module: StudioModuleID, isSpotlight: Bool = false) -> CGFloat {
         engine.moduleTextScale(module, isSpotlight: isSpotlight || engine.spotlightModule == module || standaloneModule == module)
@@ -6506,7 +7491,7 @@ struct ContentView: View {
                         }) {
                             HStack(spacing: 3) {
                                 Image(systemName: "arrow.down.left.square.fill")
-                                Text("DOCK")
+                                Text("DOCK ⌘W")
                             }
                             .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                             .padding(.horizontal, 8)
@@ -6517,11 +7502,19 @@ struct ContentView: View {
                         }
                         .buttonStyle(.plain)
                         .hoverGrow(1.05)
+                        .help("Re-dock module into console (or press ⌘W)")
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Color.black.opacity(0.6))
-                    .overlay(Rectangle().frame(height: 1).foregroundColor(engine.currentTheme.accentPrimary.opacity(0.4)), alignment: .bottom)
+                    .overlay(
+                        Rectangle().frame(height: 1.5).foregroundColor(
+                            engine.currentTheme.isRainbow
+                                ? Color(red: 1.0, green: 0.35, blue: 0.85)
+                                : engine.currentTheme.accentPrimary.opacity(0.4)
+                        ),
+                        alignment: .bottom
+                    )
 
                     moduleContentView(for: module, isSpotlight: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -6532,7 +7525,7 @@ struct ContentView: View {
 
     private var mainConsoleWindowBody: some View {
         GeometryReader { windowGeo in
-            let baseWidth: CGFloat = BitchBoyEngine.consoleBaseWidth
+            let baseWidth: CGFloat = engine.effectiveConsoleWidth
             let baseHeight: CGFloat = engine.effectiveConsoleHeight
             // ALWAYS fit inside windowGeo.size so the window NEVER clips any controls at any size!
             let fitW = max(0.15, windowGeo.size.width / baseWidth)
@@ -6644,6 +7637,59 @@ struct ContentView: View {
                 .scaleEffect(fitScale, anchor: .center)
                 .frame(width: windowGeo.size.width, height: windowGeo.size.height, alignment: .center)
 
+                // FLOATING REARRANGE & DYNAMIC RESIZING STATUS BANNER
+                if engine.isRearrangingModules {
+                    VStack {
+                        HStack(spacing: 12) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "hand.draw.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
+                                Text("REARRANGE & RESIZE MODE ACTIVE")
+                                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(.white)
+                            }
+
+                            Text("• Drag cards or use [⇦ LW] [⇨ RW] [⇩ RACK] pills")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(white: 0.78))
+
+                            Button(action: {
+                                engine.toggleRearrangeModulesMode()
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                    Text("LOCK LAYOUT")
+                                }
+                                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 5)
+                                .background(Color(red: 0.96, green: 0.76, blue: 0.18))
+                                .foregroundColor(.black)
+                                .clipShape(Capsule())
+                                .shadow(color: Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.55), radius: 5)
+                            }
+                            .buttonStyle(.plain)
+                            .hoverGrow(1.05)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule()
+                                .fill(Color(red: 0.08, green: 0.10, blue: 0.12).opacity(0.96))
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.85), lineWidth: 1.2)
+                        )
+                        .shadow(color: .black.opacity(0.65), radius: 10, y: 4)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+
+                        Spacer()
+                    }
+                }
+
                 // CENTER SPOTLIGHT MODULE OVERLAY (When user clicks the top bar of any module!)
                 // Rendered at native unscaled resolution outside fitScale for razor-sharp legibility on any display size!
                 if let spotMod = engine.spotlightModule {
@@ -6749,7 +7795,7 @@ struct ContentView: View {
                                 }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "xmark.circle.fill")
-                                        Text("RETURN TO DOCK")
+                                        Text("RETURN TO DOCK (ESC)")
                                     }
                                     .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                                     .padding(.horizontal, 10)
@@ -6759,6 +7805,7 @@ struct ContentView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
                                 }
                                 .buttonStyle(.plain)
+                                .keyboardShortcut(.escape, modifiers: [])
                                 .hoverGrow(1.05)
                             }
                             .padding(.horizontal, 14)
@@ -6803,41 +7850,34 @@ struct ContentView: View {
                 engine.applyWindowAlwaysOnTop()
             }
             .onChange(of: windowGeo.size) {
-                engine.lastComputedFitScale = fitScale
-            }
-            .onChange(of: engine.isRearrangingModules) {
-                if engine.isRearrangingModules {
-                    withAnimation(.easeInOut(duration: 0.13).repeatForever(autoreverses: true)) {
-                        jigglePhase = true
-                    }
-                } else {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        jigglePhase = false
-                    }
+                if abs(engine.lastComputedFitScale - fitScale) >= 0.05 {
+                    engine.lastComputedFitScale = fitScale
                 }
             }
+
         }
     }
 
     // ------------------------------------------------------------------------
-    // TOP NAVIGATION & SYSTEM BAR
+    // TOP NAVIGATION & SYSTEM BAR (CLEAN 3-ZONE CYBER COMMAND CONSOLE)
     // ------------------------------------------------------------------------
     private var topNavigationBar: some View {
-        HStack(spacing: 12) {
-            // Logo & OS Title (Neon Glowing BITCHMANAGER Header)
-            HStack(spacing: 10) {
-                Image("BitchBoyBadgeIcon")
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(width: 36, height: 36)
-                    .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.95 : 0.65), radius: isHoveringTitleLogo ? 9 : 5, x: 0, y: 0)
-                    .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.65 : 0.35), radius: isHoveringTitleLogo ? 16 : 10, x: 0, y: 0)
+        HStack(spacing: 8) {
+            // ZONE 1: BRAND IDENTITY & HARDWARE STATUS
+            HStack(spacing: 8) {
+                // Neon Glowing BITCHMANAGER Header & Mascot
+                HStack(spacing: 8) {
+                    Image("BitchBoyBadgeIcon")
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.95 : 0.65), radius: isHoveringTitleLogo ? 9 : 5, x: 0, y: 0)
+                        .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.65 : 0.35), radius: isHoveringTitleLogo ? 16 : 10, x: 0, y: 0)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text("BITCHMANAGER")
-                            .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 16.5, weight: .heavy, design: .monospaced))
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [
@@ -6848,277 +7888,118 @@ struct ContentView: View {
                                     endPoint: .bottom
                                 )
                             )
-                            .tracking(1.1)
-                            .shadow(color: engine.currentTheme.accentPrimary.opacity(0.95), radius: isHoveringTitleLogo ? 6 : 4, x: 0, y: 0)
-                            .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.90 : 0.68), radius: isHoveringTitleLogo ? 12 : 9, x: 0, y: 0)
-                            .shadow(color: engine.currentTheme.accentPrimary.opacity(isHoveringTitleLogo ? 0.65 : 0.42), radius: isHoveringTitleLogo ? 22 : 16, x: 0, y: 0)
-                            .scaleEffect(isHoveringTitleLogo ? 1.03 : 1.0)
-                            .animation(.easeInOut(duration: 0.2), value: isHoveringTitleLogo)
-                    }
+                            .tracking(1.0)
+                            .shadow(color: engine.currentTheme.accentPrimary.opacity(0.85), radius: isHoveringTitleLogo ? 6 : 3)
 
-                    Text("BLOCK SYSTEM HARDWARE // LED & ACTION ENGINE")
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(engine.currentTheme.headerText)
-                        .tracking(0.6)
-                        .shadow(color: engine.currentTheme.accentPrimary.opacity(0.35), radius: 4, x: 0, y: 0)
-                }
-            }
-            .onHover { hovering in
-                isHoveringTitleLogo = hovering
-            }
-
-            Spacer(minLength: 8)
-
-            // Status Pill (Online / Offline — Strictly ONLY BitchBoy Hardware Controller)
-            Menu {
-                Section("BitchBoy Hardware Status (Strict BitchBoy Only)") {
-                    Button(action: {
-                        engine.scanForBitchBoy()
-                    }) {
-                        Label("Rescan for BitchBoy Hardware Now", systemImage: "arrow.clockwise")
+                        Text("BLOCK HARDWARE // PROTOCOL ENGINE")
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText.opacity(0.85))
+                            .tracking(0.5)
                     }
                 }
-                Section("On-Connect Notification FX (When BitchBoy Plugs In)") {
-                    Button(action: {
-                        engine.toggleConnectEffectEnabled()
-                    }) {
-                        Label(
-                            engine.connectEffectEnabled ? "On-Connect FX: ENABLED" : "On-Connect FX: DISABLED",
-                            systemImage: engine.connectEffectEnabled ? "checkmark.circle.fill" : "circle"
-                        )
-                    }
-                    ForEach(engine.customEffects) { fx in
-                        Button(action: {
-                            engine.setAsOnConnectFX(fx)
-                        }) {
-                            Label(
-                                fx.name == engine.connectCustomFXName ? "★ \(fx.name) (Active Connect FX)" : "Set '\(fx.name)' as Connect FX",
-                                systemImage: fx.name == engine.connectCustomFXName ? "bolt.fill" : "sparkles"
-                            )
+                .fixedSize(horizontal: true, vertical: false)
+                .onHover { isHoveringTitleLogo = $0 }
+
+                // Hardware Status Pill (Strict BitchBoy USB / MIDI)
+                Menu {
+                    Section("BitchBoy Hardware Status") {
+                        Button(action: { engine.scanForBitchBoy() }) {
+                            Label("Rescan for BitchBoy Hardware Now", systemImage: "arrow.clockwise")
                         }
                     }
-                    Divider()
-                    Button(action: {
-                        engine.triggerBitchBoyConnectedNotificationFX(isManualTest: true)
-                    }) {
-                        Label("Preview On-Connect FX Now", systemImage: "play.fill")
-                    }
-                }
-                Section("BitchManager Updates & GitHub Release") {
-                    Text("Installed Version: v\(engine.currentAppVersion)")
-                    if let rel = engine.latestRelease {
-                        Text("Latest on GitHub: \(rel.tagName)")
-                    }
-                    Button(action: {
-                        engine.checkForUpdates(showModalIfCurrent: true)
-                    }) {
-                        Label(engine.isCheckingForUpdates ? "Checking GitHub..." : "Check for Updates on GitHub...", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .disabled(engine.isCheckingForUpdates)
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45) : Color(red: 0.98, green: 0.25, blue: 0.25))
-                        .frame(width: 8, height: 8)
-                        .shadow(color: engine.isConnected ? Color.green : Color.red, radius: 4)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(engine.isConnected ? "ONLINE // CONNECTED" : "OFFLINE // DISCONNECTED")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                            .foregroundColor(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45) : Color(red: 0.98, green: 0.35, blue: 0.35))
-
-                        Text(engine.isConnected ? "\(engine.deviceName) // Ready" : "Unplugged // Waiting for BitchBoy...")
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color(white: 0.65))
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.black.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45).opacity(0.6) : Color(red: 0.98, green: 0.35, blue: 0.35).opacity(0.6), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .menuStyle(.borderlessButton)
-            .hoverGrow(1.05)
-
-            // GITHUB AUTO-UPDATE DETECTED PILL
-            if engine.updateAvailable, let rel = engine.latestRelease {
-                Button(action: {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-                        engine.showUpdateModal = true
-                    }
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("★ UPDATE: \(rel.tagName)")
-                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 9))
-                    }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 7)
-                    .background(
-                        LinearGradient(
-                            colors: [Color(red: 0.98, green: 0.72, blue: 0.22), Color(red: 0.95, green: 0.42, blue: 0.15)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .foregroundColor(.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .shadow(color: Color.orange.opacity(0.85), radius: 8)
-                }
-                .buttonStyle(.plain)
-                .hoverGrow(1.06)
-            }
-
-            Spacer(minLength: 8)
-
-            // Right Customization & Quick Actions + Made with Love
-            HStack(spacing: 8) {
-                // Made with Love Signature (Glows brightly when the mouse hovers over it!)
-                HStack(spacing: 4) {
-                    Text("❤️ Made with love - Taylor Fossen")
-                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                        .foregroundColor(isHoveringLoveBadge ? Color.white : Color.pink.opacity(0.92))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(
-                            isHoveringLoveBadge
-                                ? Color.pink.opacity(0.42)
-                                : Color.black.opacity(0.48)
-                        )
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(
-                            isHoveringLoveBadge ? Color.pink : Color.pink.opacity(0.45),
-                            lineWidth: isHoveringLoveBadge ? 1.6 : 1.0
-                        )
-                )
-                .shadow(
-                    color: isHoveringLoveBadge ? Color.pink.opacity(0.95) : Color.clear,
-                    radius: isHoveringLoveBadge ? 10 : 0
-                )
-                .shadow(
-                    color: isHoveringLoveBadge ? Color(red: 1.0, green: 0.35, blue: 0.75).opacity(0.75) : Color.clear,
-                    radius: isHoveringLoveBadge ? 18 : 0
-                )
-                .scaleEffect(isHoveringLoveBadge ? 1.05 : 1.0)
-                .animation(.easeInOut(duration: 0.18), value: isHoveringLoveBadge)
-                .onHover { hovering in
-                    isHoveringLoveBadge = hovering
-                }
-
-                // ALWAYS ON TOP (TOP-MOST WINDOW PIN BUTTON)
-                Button(action: {
-                    engine.toggleWindowAlwaysOnTop()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: engine.isWindowAlwaysOnTop ? "pin.fill" : "pin")
-                            .font(.system(size: 8.5, weight: .bold))
-                            .rotationEffect(.degrees(engine.isWindowAlwaysOnTop ? 0 : 45))
-                        Text(engine.isWindowAlwaysOnTop ? "PINNED TOP" : "TOP MOST")
-                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(engine.isWindowAlwaysOnTop ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                    .foregroundColor(engine.isWindowAlwaysOnTop ? .black : engine.currentTheme.accentPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(engine.isWindowAlwaysOnTop ? Color.white.opacity(0.6) : Color.white.opacity(0.18), lineWidth: 1)
-                    )
-                    .shadow(color: engine.isWindowAlwaysOnTop ? engine.currentTheme.accentPrimary.opacity(0.6) : .clear, radius: 6)
-                }
-                .buttonStyle(.plain)
-                .hoverGrow(1.06)
-
-                // UI SCALE / ZOOM CONTROLLER + APP ICON MENU
-                HStack(spacing: 3) {
-                    Button(action: {
-                        engine.zoomOutUI()
-                    }) {
-                        Image(systemName: "minus.magnifyingglass")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.10)
-
-                    Menu {
-                        Button(action: {
-                            engine.enableAutoFitWindow()
-                        }) {
-                            HStack {
-                                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                Text("AUTO-FIT TO WINDOW")
-                                if engine.autoFitWindow {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
+                    Section("On-Connect Notification FX") {
+                        Button(action: { engine.toggleConnectEffectEnabled() }) {
+                            Label(
+                                engine.connectEffectEnabled ? "On-Connect FX: ENABLED" : "On-Connect FX: DISABLED",
+                                systemImage: engine.connectEffectEnabled ? "checkmark.circle.fill" : "circle"
+                            )
+                        }
+                        ForEach(engine.customEffects) { fx in
+                            Button(action: { engine.setAsOnConnectFX(fx) }) {
+                                Label(
+                                    fx.name == engine.connectCustomFXName ? "★ \(fx.name) (Active Connect FX)" : "Set '\(fx.name)' as Connect FX",
+                                    systemImage: fx.name == engine.connectCustomFXName ? "bolt.fill" : "sparkles"
+                                )
                             }
                         }
                         Divider()
-                        ForEach([15, 25, 35, 50, 65, 75, 85, 100, 115, 125, 140, 160, 180, 200], id: \.self) { pct in
-                            Button(action: {
-                                engine.setManualZoom(CGFloat(pct) / 100.0)
-                            }) {
-                                HStack {
-                                    Text("ZOOM \(pct)%")
-                                    if !engine.autoFitWindow && Int(round(engine.uiScale * 100)) == pct {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
+                        Button(action: { engine.triggerBitchBoyConnectedNotificationFX(isManualTest: true) }) {
+                            Label("Preview On-Connect FX Now", systemImage: "play.fill")
                         }
-                    } label: {
-                        let displayPct = Int(round(engine.lastComputedFitScale * 100))
-                        Text("SCALE \(displayPct)%")
-                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
-                            .background(engine.autoFitWindow ? engine.currentTheme.accentPrimary.opacity(0.22) : Color.white.opacity(0.1))
-                            .foregroundColor(engine.currentTheme.accentPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    .menuStyle(.borderlessButton)
-                    .hoverGrow(1.06)
+                    Section("BitchManager Updates & GitHub Release") {
+                        Text("Installed Version: v\(engine.currentAppVersion)")
+                        if let rel = engine.latestRelease {
+                            Text("Latest on GitHub: \(rel.tagName)")
+                        }
+                        Button(action: { engine.checkForUpdates(showModalIfCurrent: true) }) {
+                            Label(engine.isCheckingForUpdates ? "Checking GitHub..." : "Check for Updates on GitHub...", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(engine.isCheckingForUpdates)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45) : Color(red: 0.98, green: 0.25, blue: 0.25))
+                            .frame(width: 9, height: 9)
+                            .shadow(color: engine.isConnected ? Color.green : Color.red, radius: 4)
 
+                        Text(engine.isConnected ? "ONLINE" : "OFFLINE")
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45) : Color(red: 0.98, green: 0.35, blue: 0.35))
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(Color(white: 0.7))
+                    }
+                    .frame(height: 35)
+                    .padding(.horizontal, 12)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(engine.isConnected ? Color.green.opacity(0.4) : Color.red.opacity(0.4), lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .hoverGrow(1.05)
+
+                // Update Available Pill
+                if engine.updateAvailable, let rel = engine.latestRelease {
                     Button(action: {
-                        engine.zoomInUI()
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                            engine.showUpdateModal = true
+                        }
                     }) {
-                        Image(systemName: "plus.magnifyingglass")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("UPDATE \(rel.tagName)")
+                                .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        }
+                        .frame(height: 35)
+                        .padding(.horizontal, 11)
+                        .background(
+                            LinearGradient(
+                                colors: [Color(red: 0.98, green: 0.72, blue: 0.22), Color(red: 0.95, green: 0.42, blue: 0.15)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .foregroundColor(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .shadow(color: Color.orange.opacity(0.7), radius: 6)
                     }
                     .buttonStyle(.plain)
-                    .hoverGrow(1.10)
+                    .hoverGrow(1.05)
                 }
-                .padding(2)
-                .background(Color.black.opacity(0.45))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
+            }
 
-                // Preset Slot Menu
+            Spacer(minLength: 4)
+
+            // ZONE 2: STUDIO WORKSPACE, TERMINAL, PRESETS & FX
+            HStack(spacing: 6) {
+                // Preset Slot Quick Switcher
                 Menu {
                     ForEach(0..<engine.slots.count, id: \.self) { idx in
                         Button(action: {
@@ -7156,164 +8037,49 @@ struct ContentView: View {
                     let slotLetters = ["SLOT A", "SLOT B", "SLOT C", "SLOT D", "SLOT E", "SLOT F", "SLOT G", "SLOT H"]
                     HStack(spacing: 4) {
                         Image(systemName: engine.slots.indices.contains(engine.activeSlot) ? engine.slots[engine.activeSlot].iconName : "folder.fill")
+                            .font(.system(size: 12, weight: .bold))
                         Text(slotLetters[engine.activeSlot % slotLetters.count])
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9.5, weight: .bold))
                     }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 7)
+                    .frame(height: 35)
+                    .padding(.horizontal, 11)
                     .background(Color.white.opacity(0.08))
                     .foregroundColor(engine.currentTheme.accentPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.currentTheme.accentPrimary.opacity(0.35), lineWidth: 1))
                 }
                 .menuStyle(.borderlessButton)
-                .hoverGrow(1.06)
+                .hoverGrow(1.05)
 
-                // Theme Picker Menu
-                Menu {
-                    Section("Built-in Cyber Chassis Themes") {
-                        ForEach(ChassisTheme.allCases.filter { $0 != .customUser }) { th in
-                            Button(action: {
-                                engine.currentTheme = th
-                                UserDefaults.standard.set(th.rawValue, forKey: "BitchBoy_ChassisTheme_v2")
-                                SoundEffect.presetSwitch.play(with: engine.soundPack)
-                            }) {
-                                HStack {
-                                    Text(th.rawValue)
-                                    if engine.currentTheme == th {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Section("Custom Glow Themes") {
-                        ForEach(engine.customThemes) { customTh in
-                            Button(action: {
-                                engine.applyCustomTheme(customTh)
-                            }) {
-                                HStack {
-                                    Text(customTh.name)
-                                    if engine.currentTheme == .customUser && engine.activeCustomTheme.id == customTh.id {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-
-                        Divider()
-
-                        Button(action: {
-                            withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-                                engine.spotlightModule = nil
-                                engine.showCustomSoundStudio = false
-                                engine.showCustomThemeStudio = true
-                            }
-                        }) {
-                            Label("🎨 Custom Theme Studio...", systemImage: "paintpalette.fill")
-                        }
-                    }
-                } label: {
-                    let displayName = engine.currentTheme == .customUser ? engine.activeCustomTheme.name : engine.currentTheme.rawValue
-                    HStack(spacing: 4) {
-                        Text("🎨")
-                        Text(displayName)
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color.white.opacity(0.08))
-                    .foregroundColor(engine.currentTheme.accentPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
-                }
-                .menuStyle(.borderlessButton)
-                .hoverGrow(1.06)
-
-                // Sound Pack & Custom Sound Upload Menu
-                Menu {
-                    Button(action: {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-                            engine.spotlightModule = nil
-                            engine.showCustomSoundStudio = true
-                        }
-                    }) {
-                        Label("🎛️ Upload / Manage Custom Sounds...", systemImage: "waveform.badge.plus")
-                    }
-                    Divider()
-                    ForEach(SoundPack.allCases) { pack in
-                        Button(action: {
-                            engine.setSoundPack(pack)
-                        }) {
-                            HStack {
-                                Text(pack.rawValue)
-                                if engine.soundPack == pack {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                    Divider()
-                    Text("Quick Upload Custom Audio:")
-                    ForEach(SoundEffect.allCases) { sfx in
-                        Button(action: {
-                            engine.uploadCustomSoundFile(for: sfx)
-                        }) {
-                            let currentFile = CustomSoundBank.shared.fileName(for: sfx)
-                            Label(
-                                currentFile != nil ? "\(sfx.displayName) (\(currentFile!))" : "Upload \(sfx.displayName)...",
-                                systemImage: sfx.iconName
-                            )
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: engine.soundPack == .mute ? "speaker.slash.fill" : (engine.soundPack == .customUser ? "waveform.badge.mic" : "speaker.wave.2.fill"))
-                        Text(engine.soundPack.rawValue)
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(engine.soundPack == .customUser ? engine.currentTheme.accentPrimary.opacity(0.22) : Color.white.opacity(0.08))
-                    .foregroundColor(engine.soundPack == .customUser ? engine.currentTheme.accentPrimary : Color(white: 0.85))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(engine.soundPack == .customUser ? engine.currentTheme.accentPrimary.opacity(0.6) : Color.white.opacity(0.18), lineWidth: 1))
-                }
-                .menuStyle(.borderlessButton)
-                .hoverGrow(1.06)
-
-                // iOS-Style Module Rearrange / Jiggle & Pop-Out Window Button
-                HStack(spacing: 3) {
-                    Button(action: {
-                        engine.toggleRearrangeModulesMode()
-                    }) {
+                // Modules Manager & Layout Presets
+                HStack(spacing: 2) {
+                    Button(action: { engine.toggleRearrangeModulesMode() }) {
                         HStack(spacing: 4) {
                             Image(systemName: engine.isRearrangingModules ? "checkmark.circle.fill" : "square.grid.2x2.fill")
-                                .font(.system(size: 8.5, weight: .bold))
-                            Text(engine.isRearrangingModules ? "DONE" : "MODULES")
-                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 12.5, weight: .bold))
+                            Text(engine.isRearrangingModules ? "DONE (LOCK)" : "MODULES")
+                                .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
+                        .frame(height: 35)
+                        .padding(.horizontal, 12)
                         .background(engine.isRearrangingModules ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.08))
                         .foregroundColor(engine.isRearrangingModules ? .black : engine.currentTheme.accentPrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(engine.isRearrangingModules ? Color.white : Color.white.opacity(0.18), lineWidth: 1)
-                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.isRearrangingModules ? Color.white : engine.currentTheme.accentPrimary.opacity(0.35), lineWidth: 1))
+                        .shadow(color: engine.isRearrangingModules ? Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.4) : .clear, radius: 4)
                     }
                     .buttonStyle(.plain)
-                    .hoverGrow(1.06)
-                    .help("Toggle Rearrange & Dynamic Resizing Mode (Drag cards into spaces or resize)")
+                    .hoverGrow(1.05)
+                    .help("Toggle Rearrange & Dynamic Resizing Mode")
 
                     Menu {
                         Button(action: { engine.toggleRearrangeModulesMode() }) {
-                            Label(engine.isRearrangingModules ? "Lock Layout (Exit Rearrange Mode)" : "Rearrange Mode (Drag into Spaces)", systemImage: engine.isRearrangingModules ? "lock.fill" : "hand.draw.fill")
+                            Label(engine.isRearrangingModules ? "Lock Layout (Exit Rearrange Mode)" : "Rearrange Mode (Drag or Move into Slots)", systemImage: engine.isRearrangingModules ? "lock.fill" : "hand.draw.fill")
+                        }
+                        Button(action: { engine.dockAllModules() }) {
+                            Label("Dock All Floating Windows Back to Console", systemImage: "macwindow.and.cursorarrow")
                         }
                         Divider()
                         Section("LAYOUT PRESETS") {
@@ -7330,38 +8096,77 @@ struct ContentView: View {
                             }
                             Button(action: {
                                 for m in StudioModuleID.allCases {
-                                    engine.setModuleHeight(m, height: 340, save: false)
+                                    engine.setModuleHeight(m, height: 380, save: false)
                                 }
                                 engine.saveModuleSizes()
                             }) {
-                                Label("Standard Size All Modules (340px)", systemImage: "arrow.up.left.and.arrow.down.right")
+                                Label("Standard Size All Modules (380px)", systemImage: "arrow.up.left.and.arrow.down.right")
+                            }
+                            Button(action: {
+                                for m in StudioModuleID.allCases {
+                                    engine.setModuleHeight(m, height: 490, save: false)
+                                }
+                                engine.saveModuleSizes()
+                            }) {
+                                Label("Expanded Size All Modules (490px)", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
                             }
                         }
                     } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 7)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .frame(width: 18, height: 35)
                             .background(Color.white.opacity(0.08))
                             .foregroundColor(engine.currentTheme.accentPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
                     .menuStyle(.borderlessButton)
-                    .hoverGrow(1.10)
-                    .help("Layout Options & Quick Presets")
+                    .hoverGrow(1.05)
                 }
+
+                // Quick Terminal Button
+                Button(action: {
+                    if engine.spotlightModule == .terminal {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                            engine.spotlightModule = nil
+                        }
+                    } else if engine.detachedModules.contains(.terminal) {
+                        engine.toggleSpotlightModule(.terminal)
+                    } else {
+                        engine.toggleSpotlightModule(.terminal)
+                    }
+                    SoundEffect.keyTap.play(with: engine.soundPack)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "apple.terminal.fill")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("TERMINAL")
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                        Circle()
+                            .fill(engine.protocolEvents.isEmpty ? Color.gray : Color.green)
+                            .frame(width: 6.5, height: 6.5)
+                    }
+                    .frame(height: 35)
+                    .padding(.horizontal, 11)
+                    .background(engine.spotlightModule == .terminal ? Color.cyan.opacity(0.25) : Color.white.opacity(0.08))
+                    .foregroundColor(engine.spotlightModule == .terminal ? Color.cyan : Color(white: 0.88))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.spotlightModule == .terminal ? Color.cyan : Color.white.opacity(0.18), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .hoverGrow(1.05)
+                .help("Toggle Protocol Terminal & Packet Monitor")
 
                 // Rainbow Refresh
                 Button(action: {
                     engine.runRainbowWaveRefresh()
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Text("✨🌈")
-                        Text("RAINBOW REFRESH")
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        Text("RAINBOW")
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                    .frame(height: 35)
+                    .padding(.horizontal, 12)
                     .background(
                         LinearGradient(
                             colors: [Color(red: 0.45, green: 0.25, blue: 0.75), Color(red: 0.25, green: 0.65, blue: 0.75)],
@@ -7370,88 +8175,438 @@ struct ContentView: View {
                         )
                     )
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
-                .hoverGrow(1.06)
+                .hoverGrow(1.05)
                 .disabled(engine.isRainbowRunning)
 
-                // FX Light Show Menu
-                Menu {
-                    ForEach(LEDFXMode.allCases) { mode in
-                        Button(action: {
-                            engine.applyFXMode(mode)
-                        }) {
-                            HStack {
-                                Image(systemName: mode.icon)
-                                Text(mode.rawValue)
-                                if engine.currentFXMode == mode {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
+                // FX Light Show Menu & Stop Button
+                HStack(spacing: 2) {
+                    Menu {
+                        ForEach(LEDFXMode.allCases) { mode in
+                            Button(action: {
+                                engine.applyFXMode(mode)
+                            }) {
+                                HStack {
+                                    Image(systemName: mode.icon)
+                                    Text(mode.rawValue)
+                                    if engine.currentFXMode == mode {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
-                    }
-                    Divider()
-                    Text("★ USER CUSTOM LIGHT SHOWS")
-                    ForEach(engine.customEffects) { cfx in
-                        Button(action: {
-                            engine.playCustomEffect(cfx)
-                        }) {
-                            HStack {
-                                Image(systemName: cfx.isProcedural ? "waveform.path.ecg" : "film.stack")
-                                Text("★ \(cfx.name)")
-                                if engine.isPlayingCustomFX && engine.activeCustomFXName == cfx.name {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
+                        Divider()
+                        Text("★ USER CUSTOM LIGHT SHOWS")
+                        ForEach(engine.customEffects) { cfx in
+                            Button(action: {
+                                engine.playCustomEffect(cfx)
+                            }) {
+                                HStack {
+                                    Image(systemName: cfx.isProcedural ? "waveform.path.ecg" : "film.stack")
+                                    Text("★ \(cfx.name)")
+                                    if engine.isPlayingCustomFX && engine.activeCustomFXName == cfx.name {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
-                    }
-                    Divider()
-                    Button("⏹ STOP FX (RESTORE PRESET)") {
-                        engine.stopCustomEffect()
-                        engine.applyFXMode(.staticFX)
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: engine.isPlayingCustomFX ? "wand.and.stars" : (engine.currentFXMode == .staticFX ? "sparkles" : engine.currentFXMode.icon))
-                        Text(engine.isPlayingCustomFX ? "CUSTOM: \(engine.activeCustomFXName)" : "FX: \(engine.currentFXMode.rawValue)")
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.08, green: 0.25, blue: 0.24) : Color(red: 0.92, green: 0.45, blue: 0.15).opacity(0.88))
-                    .foregroundColor((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.22, green: 0.96, blue: 0.76) : .white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.6), lineWidth: 1))
-                }
-                .menuStyle(.borderlessButton)
-                .hoverGrow(1.06)
-
-                if engine.currentFXMode != .staticFX || engine.isPlayingCustomFX {
-                    Button(action: {
-                        engine.stopCustomEffect()
-                        engine.applyFXMode(.staticFX)
-                    }) {
+                        Divider()
+                        Button("⏹ STOP FX (RESTORE PRESET)") {
+                            engine.stopCustomEffect()
+                            engine.applyFXMode(.staticFX)
+                        }
+                    } label: {
                         HStack(spacing: 3) {
-                            Image(systemName: "stop.fill")
-                            Text("STOP FX")
+                            Image(systemName: engine.isPlayingCustomFX ? "wand.and.stars" : (engine.currentFXMode == .staticFX ? "sparkles" : engine.currentFXMode.icon))
+                                .font(.system(size: 12, weight: .bold))
+                            Text(engine.isPlayingCustomFX ? "FX: \(engine.activeCustomFXName)" : "FX: \(engine.currentFXMode.rawValue)")
+                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9.5, weight: .bold))
                         }
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .background(Color.red.opacity(0.85))
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(height: 35)
+                        .padding(.horizontal, 11)
+                        .background((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.08, green: 0.25, blue: 0.24) : Color(red: 0.92, green: 0.45, blue: 0.15).opacity(0.88))
+                        .foregroundColor((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.22, green: 0.96, blue: 0.76) : .white)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.5), lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
-                    .hoverGrow(1.06)
+                    .menuStyle(.borderlessButton)
+                    .hoverGrow(1.05)
+
+                    if engine.currentFXMode != .staticFX || engine.isPlayingCustomFX {
+                        Button(action: {
+                            engine.stopCustomEffect()
+                            engine.applyFXMode(.staticFX)
+                        }) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 7.5, weight: .heavy))
+                                .frame(width: 28, height: 35)
+                                .background(Color.red.opacity(0.85))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain)
+                        .hoverGrow(1.05)
+                        .help("Stop active FX and restore preset LEDs")
+                    }
                 }
             }
+
+            Spacer(minLength: 4)
+
+            // ZONE 3: VIEW, AESTHETICS, WINDOW CONTROL & SIGNATURE
+            HStack(spacing: 6) {
+                // UI Zoom / Scale segmented control
+                HStack(spacing: 1) {
+                    Button(action: { engine.zoomOutUI() }) {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 32, height: 35)
+                            .background(Color.white.opacity(0.08))
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+
+                    Menu {
+                        Button(action: { engine.enableAutoFitWindow() }) {
+                            HStack {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                Text("AUTO-FIT TO WINDOW")
+                                if engine.autoFitWindow {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Divider()
+                        ForEach([15, 25, 35, 50, 65, 75, 85, 100, 115, 125, 140, 160, 180, 200], id: \.self) { pct in
+                            Button(action: { engine.setManualZoom(CGFloat(pct) / 100.0) }) {
+                                HStack {
+                                    Text("ZOOM \(pct)%")
+                                    if !engine.autoFitWindow && Int(round(engine.uiScale * 100)) == pct {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        let displayPct = Int(round(engine.lastComputedFitScale * 100))
+                        Text("\(displayPct)%")
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .frame(height: 35)
+                            .padding(.horizontal, 12)
+                            .background(engine.autoFitWindow ? engine.currentTheme.accentPrimary.opacity(0.22) : Color.white.opacity(0.08))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                    }
+                    .menuStyle(.borderlessButton)
+
+                    Button(action: { engine.zoomInUI() }) {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 32, height: 35)
+                            .background(Color.white.opacity(0.08))
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
+
+                // Themes & Sounds Combined Menu
+                Menu {
+                    Section("CYBER CHASSIS THEMES") {
+                        ForEach(ChassisTheme.allCases.filter { $0 != .customUser }) { th in
+                            Button(action: {
+                                engine.currentTheme = th
+                                UserDefaults.standard.set(th.rawValue, forKey: "BitchBoy_ChassisTheme_v2")
+                                if th == .prismRainbow {
+                                    engine.runRainbowWaveRefresh()
+                                }
+                                SoundEffect.presetSwitch.play(with: engine.soundPack)
+                            }) {
+                                HStack {
+                                    Text(th.rawValue)
+                                    if engine.currentTheme == th {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        ForEach(engine.customThemes) { customTh in
+                            Button(action: { engine.applyCustomTheme(customTh) }) {
+                                HStack {
+                                    Text("★ \(customTh.name)")
+                                    if engine.currentTheme == .customUser && engine.activeCustomTheme.id == customTh.id {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        Button(action: {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
+                                engine.spotlightModule = nil
+                                engine.showCustomSoundStudio = false
+                                engine.showCustomThemeStudio = true
+                            }
+                        }) {
+                            Label("🎨 Custom Theme Studio...", systemImage: "paintpalette.fill")
+                        }
+                    }
+
+                    Section("AUDIO FEEDBACK SOUND PACKS") {
+                        ForEach(SoundPack.allCases) { pack in
+                            Button(action: { engine.setSoundPack(pack) }) {
+                                HStack {
+                                    Text(pack.rawValue)
+                                    if engine.soundPack == pack {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        Button(action: {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
+                                engine.spotlightModule = nil
+                                engine.showCustomSoundStudio = true
+                            }
+                        }) {
+                            Label("🎙️ Manage Custom Sounds...", systemImage: "waveform.badge.plus")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("🎨")
+                        Text(engine.currentTheme == .customUser ? engine.activeCustomTheme.name : engine.currentTheme.rawValue)
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9.5, weight: .bold))
+                    }
+                    .frame(height: 35)
+                    .padding(.horizontal, 11)
+                    .background(Color.white.opacity(0.08))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .hoverGrow(1.05)
+
+                // Pop Out & Floating Modules Menu
+                Menu {
+                    Section("HARDWARE MODULES") {
+                        Button(action: { engine.popOutModuleToWindow(.keyGrid8x4) }) {
+                            HStack {
+                                Label("8x4 Key Grid (32 Keys)", systemImage: "square.grid.4x3.fill")
+                                if engine.detachedModules.contains(.keyGrid8x4) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.keyStrip1x8) }) {
+                            HStack {
+                                Label("1x8 Key Strip (8 Keys)", systemImage: "rectangle.split.3x1.fill")
+                                if engine.detachedModules.contains(.keyStrip1x8) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.keypad3x3) }) {
+                            HStack {
+                                Label("3x3 Keypad & Mascot", systemImage: "circle.grid.3x3.fill")
+                                if engine.detachedModules.contains(.keypad3x3) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.verticalFaders) }) {
+                            HStack {
+                                Label("8 Vertical Faders (CC 0-7)", systemImage: "slider.vertical.3")
+                                if engine.detachedModules.contains(.verticalFaders) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.horizontalFaders) }) {
+                            HStack {
+                                Label("4 Horizontal Faders (CC 8-11)", systemImage: "slider.horizontal.below.rectangle")
+                                if engine.detachedModules.contains(.horizontalFaders) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.rotaryKnobs) }) {
+                            HStack {
+                                Label("2x4 Rotary Knobs (CC 20-27)", systemImage: "dial.low.fill")
+                                if engine.detachedModules.contains(.rotaryKnobs) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.colorPickerHUD) }) {
+                            HStack {
+                                Label("Color Picker // LED Inspector", systemImage: "paintpalette.fill")
+                                if engine.detachedModules.contains(.colorPickerHUD) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+
+                    Section("EXPANSION MODULES") {
+                        Button(action: { engine.popOutModuleToWindow(.terminal) }) {
+                            HStack {
+                                Label("Protocol Terminal", systemImage: "apple.terminal.fill")
+                                if engine.detachedModules.contains(.terminal) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.showControl) }) {
+                            HStack {
+                                Label("Show Control // OSC Studio", systemImage: "dot.radiowaves.left.and.right")
+                                if engine.detachedModules.contains(.showControl) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.midiRouter) }) {
+                            HStack {
+                                Label("MIDI Router // Out", systemImage: "point.3.connected.trianglepath.dotted")
+                                if engine.detachedModules.contains(.midiRouter) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.customFXStudio) }) {
+                            HStack {
+                                Label("Custom FX Studio", systemImage: "wand.and.stars")
+                                if engine.detachedModules.contains(.customFXStudio) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.reactiveKeyFX) }) {
+                            HStack {
+                                Label("Reactive Key FX", systemImage: "waveform.circle.fill")
+                                if engine.detachedModules.contains(.reactiveKeyFX) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.popOutModuleToWindow(.memorySlots) }) {
+                            HStack {
+                                Label("Memory Slots Bank", systemImage: "memorychip.fill")
+                                if engine.detachedModules.contains(.memorySlots) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button(action: { engine.dockAllModules() }) {
+                        Label("Dock All Floating Windows", systemImage: "arrow.down.left.square.fill")
+                    }
+                    Button(action: { engine.toggleRearrangeModulesMode() }) {
+                        Label(engine.isRearrangingModules ? "Done Rearranging" : "Rearrange Rack & Wings...", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "macwindow.on.rectangle")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("MODULES")
+                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        if !engine.detachedModules.isEmpty {
+                            Text("\(engine.detachedModules.count)")
+                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                                .padding(.horizontal, 4.5)
+                                .padding(.vertical, 1)
+                                .background(engine.currentTheme.accentPrimary)
+                                .foregroundColor(.black)
+                                .clipShape(Capsule())
+                        }
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8.5, weight: .bold))
+                    }
+                    .frame(height: 35)
+                    .padding(.horizontal, 10)
+                    .background(Color.white.opacity(0.08))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .hoverGrow(1.05)
+                .help("Pop out any control into its own window or dock back")
+
+                // Window Always-On-Top Pin Button
+                Button(action: { engine.toggleWindowAlwaysOnTop() }) {
+                    Image(systemName: engine.isWindowAlwaysOnTop ? "pin.fill" : "pin")
+                        .font(.system(size: 13, weight: .bold))
+                        .rotationEffect(.degrees(engine.isWindowAlwaysOnTop ? 0 : 45))
+                        .frame(width: 35, height: 35)
+                        .background(engine.isWindowAlwaysOnTop ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
+                        .foregroundColor(engine.isWindowAlwaysOnTop ? .black : engine.currentTheme.accentPrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(engine.isWindowAlwaysOnTop ? Color.white.opacity(0.6) : Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                        .shadow(color: engine.isWindowAlwaysOnTop ? engine.currentTheme.accentPrimary.opacity(0.6) : .clear, radius: 6)
+                }
+                .buttonStyle(.plain)
+                .hoverGrow(1.05)
+                .help("Toggle Window Always On Top")
+
+                // Made with Love Badge
+                HStack(spacing: 3) {
+                    Text("❤️ Taylor Fossen")
+                        .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                        .foregroundColor(isHoveringLoveBadge ? Color.white : Color.pink.opacity(0.92))
+                }
+                .frame(height: 35)
+                .padding(.horizontal, 12)
+                .background(
+                    Capsule()
+                        .fill(isHoveringLoveBadge ? Color.pink.opacity(0.42) : Color.black.opacity(0.48))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isHoveringLoveBadge ? Color.pink : Color.pink.opacity(0.45), lineWidth: isHoveringLoveBadge ? 1.5 : 1.0)
+                )
+                .shadow(color: isHoveringLoveBadge ? Color.pink.opacity(0.95) : Color.clear, radius: isHoveringLoveBadge ? 10 : 0)
+                .scaleEffect(isHoveringLoveBadge ? 1.04 : 1.0)
+                .animation(.easeInOut(duration: 0.18), value: isHoveringLoveBadge)
+                .onHover { isHoveringLoveBadge = $0 }
+            }
+
         }
+        .frame(width: engine.chassisTotalWidth)
     }
 
     // ------------------------------------------------------------------------
@@ -7466,11 +8621,13 @@ struct ContentView: View {
             // Metallic Bezel
             RoundedRectangle(cornerRadius: 20)
                 .stroke(
-                    LinearGradient(
-                        colors: engine.currentTheme.outerBezelColors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    engine.currentTheme.isRainbow
+                        ? AnyShapeStyle(engine.currentTheme.rainbowGradient)
+                        : AnyShapeStyle(LinearGradient(
+                            colors: engine.currentTheme.outerBezelColors,
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )),
                     lineWidth: 5.5
                 )
 
@@ -7495,12 +8652,12 @@ struct ContentView: View {
             .padding(7)
 
             // FULL-CHASSIS HARDWARE CONSOLE: LEFT WING + CENTER BITCHBOY MATRIX + RIGHT WING
-            HStack(alignment: .top, spacing: 20) {
+            HStack(alignment: .top, spacing: 0) {
                 // LEFT WING (Modules placed in Left Wing)
-                if !engine.leftWingModules.isEmpty || engine.isRearrangingModules {
-                    ScrollView([.vertical], showsIndicators: true) {
+                if !engine.leftWingModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
+                    HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 10) {
-                            ForEach(engine.leftWingModules) { mod in
+                            ForEach(engine.leftWingModules.filter { !$0.isHardwareModule }) { mod in
                                 dynamicModuleContainer(for: mod, in: .leftWing)
                             }
                             if engine.isRearrangingModules {
@@ -7508,10 +8665,12 @@ struct ContentView: View {
                             }
                         }
                         .padding(.vertical, 2)
+                        .frame(width: engine.leftWingWidth)
+                        .frame(height: engine.chassisContentHeight, alignment: .top)
+
+                        WingHorizontalResizeDivider(width: $engine.leftWingWidth, isLeft: true)
                     }
-                    .frame(width: engine.leftWingWidth)
-                    .frame(height: engine.chassisContentHeight)
-                    .clipped()
+                    .frame(width: engine.totalLeftWingWidth, alignment: .leading)
                 }
 
                 // CENTER HARDWARE CONSOLE: 8x4 Grid + 1x8 Strip + 8 VFaders + 4 HFaders + Logo + HUD + Knobs + 3x3 Keypad + OPTIONAL BOTTOM RACK
@@ -7558,50 +8717,60 @@ struct ContentView: View {
                     }
 
                     // BOTTOM CONSOLE RACK (Expansion Bay for modules placed in bottom rack!)
-                    if !engine.bottomRackModules.isEmpty || engine.isRearrangingModules {
+                    if !engine.bottomRackModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 5) {
                                 Image(systemName: "rectangle.bottomthird.inset.filled")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: 12, weight: .bold))
                                     .foregroundColor(engine.currentTheme.accentPrimary)
                                 Text("CONSOLE EXPANSION BAY // BOTTOM RACK")
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                     .foregroundColor(engine.currentTheme.headerText)
                                 Spacer()
                             }
                             .padding(.horizontal, 4)
 
                             ScrollView([.horizontal], showsIndicators: true) {
-                                HStack(alignment: .top, spacing: 12) {
-                                    ForEach(engine.bottomRackModules) { mod in
+                                HStack(alignment: .top, spacing: 16) {
+                                    ForEach(engine.bottomRackModules.filter { !$0.isHardwareModule }) { mod in
                                         dynamicModuleContainer(for: mod, in: .bottomRack)
-                                            .frame(width: engine.moduleCustomWidths[mod] ?? 435)
                                     }
                                     if engine.isRearrangingModules {
                                         dropTargetCard(forZone: .bottomRack)
-                                            .frame(width: 220)
+                                            .frame(width: 260)
                                     }
                                 }
-                                .padding(.vertical, 4)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 6)
                             }
                             .frame(maxWidth: 894)
                         }
                         .padding(8)
                         .background(Color.black.opacity(0.35))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(engine.currentTheme.sectionOutline.opacity(0.4), lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(
+                                    engine.currentTheme.isRainbow
+                                        ? AnyShapeStyle(engine.currentTheme.rainbowGradient)
+                                        : AnyShapeStyle(engine.currentTheme.sectionOutline.opacity(0.4)),
+                                    lineWidth: engine.currentTheme.isRainbow ? 1.8 : 1
+                                )
+                        )
                         .onDrop(of: [.plainText], delegate: ZoneDropDelegate(targetZone: .bottomRack, engine: engine))
-                    } else if engine.chassisContentHeight > 560 {
+                    } else if engine.chassisContentHeight > 660 {
                         bottomRackEmptyShelf
                     }
                 }
-                .frame(height: engine.chassisContentHeight, alignment: .top)
+                .frame(width: engine.centerConsoleWidth, height: engine.chassisContentHeight, alignment: .top)
 
                 // RIGHT WING (Modules placed in Right Wing)
-                if !engine.rightWingModules.isEmpty || engine.isRearrangingModules {
-                    ScrollView([.vertical], showsIndicators: true) {
+                if !engine.rightWingModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
+                    HStack(alignment: .top, spacing: 10) {
+                        WingHorizontalResizeDivider(width: $engine.rightWingWidth, isLeft: false)
+
                         VStack(alignment: .leading, spacing: 10) {
-                            ForEach(engine.rightWingModules) { mod in
+                            ForEach(engine.rightWingModules.filter { !$0.isHardwareModule }) { mod in
                                 dynamicModuleContainer(for: mod, in: .rightWing)
                             }
                             if engine.isRearrangingModules {
@@ -7609,17 +8778,17 @@ struct ContentView: View {
                             }
                         }
                         .padding(.vertical, 2)
+                        .frame(width: engine.rightWingWidth)
+                        .frame(height: engine.chassisContentHeight, alignment: .top)
                     }
-                    .frame(width: engine.rightWingWidth)
-                    .frame(height: engine.chassisContentHeight)
-                    .clipped()
+                    .frame(width: engine.totalRightWingWidth, alignment: .trailing)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 20)
+            .frame(width: engine.chassisTotalWidth, alignment: .leading)
         }
-        .frame(height: engine.chassisContentHeight + 36)
+        .frame(width: engine.chassisTotalWidth, height: engine.chassisContentHeight + 40)
     }
 
     private var bottomRackEmptyShelf: some View {
@@ -7633,7 +8802,7 @@ struct ContentView: View {
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
                 Menu {
-                    ForEach(StudioModuleID.allCases) { m in
+                    ForEach(StudioModuleID.expansionModules) { m in
                         if engine.currentZone(of: m) != .bottomRack {
                             Button("Dock \(m.rawValue) Here") {
                                 engine.moveModuleToZone(m, zone: .bottomRack)
@@ -7707,6 +8876,22 @@ struct ContentView: View {
             return AnyView(rightWingReactiveKeyFXPanel(isSpotlight: isSpotlight))
         case .showControl:
             return AnyView(showControlStudioPanel(isSpotlight: isSpotlight))
+        case .terminal:
+            return AnyView(protocolTerminalStudioPanel(isSpotlight: isSpotlight))
+        case .keyGrid8x4:
+            return AnyView(keyGridStudioPanel(isSpotlight: isSpotlight))
+        case .keyStrip1x8:
+            return AnyView(keyStripStudioPanel(isSpotlight: isSpotlight))
+        case .verticalFaders:
+            return AnyView(verticalFadersStudioPanel(isSpotlight: isSpotlight))
+        case .horizontalFaders:
+            return AnyView(horizontalFadersStudioPanel(isSpotlight: isSpotlight))
+        case .rotaryKnobs:
+            return AnyView(rotaryKnobsStudioPanel(isSpotlight: isSpotlight))
+        case .keypad3x3:
+            return AnyView(keypadStudioPanel(isSpotlight: isSpotlight))
+        case .colorPickerHUD:
+            return AnyView(colorPickerStudioPanel(isSpotlight: isSpotlight))
         }
     }
 
@@ -7718,13 +8903,14 @@ struct ContentView: View {
             }) {
                 HStack(spacing: 2.5) {
                     Image(systemName: "arrow.up.and.down")
-                        .font(.system(size: 7.5, weight: .bold))
+                        .font(.system(size: 9.5, weight: .bold))
                     Text(engine.moduleSizePresetLabel(module))
-                        .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
                         .lineLimit(1)
                 }
                 .foregroundColor(engine.currentTheme.accentPrimary)
-                .frame(width: 64, height: 18)
+                .frame(height: 22)
+                .padding(.horizontal, 6)
                 .background(engine.currentTheme.accentPrimary.opacity(0.18))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3.5)
@@ -7745,13 +8931,14 @@ struct ContentView: View {
                 }) {
                     HStack(spacing: 2.5) {
                         Image(systemName: "arrow.left.and.right")
-                            .font(.system(size: 7.5, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                         Text(engine.moduleWidthPresetLabel(module))
-                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
                             .lineLimit(1)
                     }
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
-                    .frame(width: 58, height: 19)
+                    .frame(height: 22)
+                    .padding(.horizontal, 6)
                     .background(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.18))
                     .overlay(
                         RoundedRectangle(cornerRadius: 3.5)
@@ -7810,9 +8997,9 @@ struct ContentView: View {
                 }
             } label: {
                 Image(systemName: "square.split.bottomrightquarter")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(white: 0.85))
-                    .frame(width: 17, height: 19)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Color(white: 0.90))
+                    .frame(width: 22, height: 22)
                     .background(Color.white.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
@@ -7827,9 +9014,9 @@ struct ContentView: View {
                 engine.toggleSpotlightModule(module)
             }) {
                 Image(systemName: engine.spotlightModule == module ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(engine.spotlightModule == module ? .black : engine.currentTheme.accentPrimary)
-                    .frame(width: 17, height: 19)
+                    .frame(width: 22, height: 22)
                     .background(engine.spotlightModule == module ? engine.currentTheme.accentPrimary : Color.white.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
@@ -7845,9 +9032,9 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(module)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(white: 0.85))
-                        .frame(width: 17, height: 19)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Color(white: 0.90))
+                        .frame(width: 22, height: 22)
                         .background(Color.white.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 3.5))
                 }
@@ -7864,8 +9051,15 @@ struct ContentView: View {
 
     private func dynamicModuleContainer(for mod: StudioModuleID, in zone: ModuleZone) -> some View {
         let isDetached = engine.detachedModules.contains(mod)
-        let jiggleAngle: Double = engine.isRearrangingModules ? (jigglePhase ? -1.1 : 1.1) : 0.0
         let targetHeight = engine.moduleCustomHeights[mod] ?? mod.defaultSlotHeight
+        let cardWidth: CGFloat = {
+            switch zone {
+            case .leftWing: return max(380, engine.leftWingWidth)
+            case .rightWing: return max(380, engine.rightWingWidth)
+            case .bottomRack: return max(380, engine.moduleCustomWidths[mod] ?? 435)
+            case .floating: return max(380, engine.moduleCustomWidths[mod] ?? 435)
+            }
+        }()
 
         return VStack(spacing: 0) {
             // If in Rearrange Mode, show the Quick Move / Zone Transfer pill bar above card
@@ -7876,6 +9070,7 @@ struct ContentView: View {
 
             if isDetached {
                 detachedModulePlaceholderCard(for: mod)
+                    .frame(width: cardWidth)
             } else {
                 VStack(spacing: 0) {
                     // Module Content (Internally scrollable so NOTHING ever cuts off!)
@@ -7885,18 +9080,25 @@ struct ContentView: View {
                     // Interactive Bottom Drag-to-Resize Handle Bar
                     moduleResizeHandleBar(for: mod, currentHeight: targetHeight, zone: zone)
                 }
+                .frame(width: cardWidth)
                 .frame(height: targetHeight)
+                .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
-                            engine.isRearrangingModules ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.clear,
-                            style: StrokeStyle(lineWidth: engine.isRearrangingModules ? 1.8 : 0, dash: [6, 4])
+                            engine.isRearrangingModules
+                                ? AnyShapeStyle(Color(red: 0.96, green: 0.76, blue: 0.18))
+                                : (engine.currentTheme.isRainbow
+                                    ? AnyShapeStyle(engine.currentTheme.rainbowGradient)
+                                    : AnyShapeStyle(Color.clear)),
+                            style: StrokeStyle(lineWidth: (engine.isRearrangingModules || engine.currentTheme.isRainbow) ? (engine.isRearrangingModules ? 2.0 : 1.5) : 0, dash: engine.isRearrangingModules ? [6, 4] : [])
                         )
                 )
             }
         }
-        .rotationEffect(.degrees(jiggleAngle))
+        .frame(width: cardWidth)
+        .clipped()
         .onDrag {
             engine.draggingModule = mod
             return NSItemProvider(object: mod.rawValue as NSString)
@@ -7907,10 +9109,72 @@ struct ContentView: View {
         }
     }
 
+    struct WingHorizontalResizeDivider: View {
+        @Binding var width: CGFloat
+        let isLeft: Bool
+        let minWidth: CGFloat = 350
+        let maxWidth: CGFloat = 580
+        let defaultWidth: CGFloat = 380
+
+        @State private var isHovered: Bool = false
+        @State private var dragStartWidth: CGFloat = 0
+
+        var body: some View {
+            ZStack {
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: 14)
+
+                Rectangle()
+                    .fill(isHovered ? Color.cyan.opacity(0.9) : Color.white.opacity(0.12))
+                    .frame(width: isHovered ? 2 : 1)
+
+                VStack(spacing: 3) {
+                    Circle().fill(isHovered ? Color.cyan : Color.white.opacity(0.35)).frame(width: 3, height: 3)
+                    Capsule().fill(isHovered ? Color.cyan : Color.white.opacity(0.25)).frame(width: 3, height: 26)
+                    Circle().fill(isHovered ? Color.cyan : Color.white.opacity(0.35)).frame(width: 3, height: 3)
+                }
+                .shadow(color: isHovered ? Color.cyan.opacity(0.8) : Color.clear, radius: 4)
+            }
+            .frame(width: 14)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isHovered = hovering
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { val in
+                        if dragStartWidth == 0 {
+                            dragStartWidth = width
+                        }
+                        let delta = isLeft ? val.translation.width : -val.translation.width
+                        let target = max(minWidth, min(maxWidth, dragStartWidth + delta))
+                        width = target
+                    }
+                    .onEnded { _ in
+                        dragStartWidth = 0
+                        UserDefaults.standard.set(Double(width), forKey: isLeft ? "BitchBoy_LeftWingWidth_v2" : "BitchBoy_RightWingWidth_v2")
+                    }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    width = defaultWidth
+                }
+                UserDefaults.standard.set(Double(defaultWidth), forKey: isLeft ? "BitchBoy_LeftWingWidth_v2" : "BitchBoy_RightWingWidth_v2")
+            }
+            .help("Grab and drag horizontally to resize wing smoothly. Double-click to reset width.")
+        }
+    }
+
     private func moduleResizeHandleBar(for mod: StudioModuleID, currentHeight: CGFloat, zone: ModuleZone) -> some View {
         HStack(spacing: 4) {
             Text("↕ RESIZE")
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(Color(white: 0.70))
 
             Spacer()
@@ -7926,7 +9190,7 @@ struct ContentView: View {
                     engine.cycleModuleWidthPreset(mod)
                 }) {
                     Text("WIDTH: \(engine.moduleWidthPresetLabel(mod))")
-                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
@@ -7938,11 +9202,11 @@ struct ContentView: View {
             }
 
             Text("\(Int(currentHeight))PX")
-                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                 .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.95))
 
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 8.5, weight: .bold))
+                .font(.system(size: 10.5, weight: .bold))
                 .foregroundColor(engine.currentTheme.accentPrimary)
         }
         .padding(.horizontal, 8)
@@ -8035,19 +9299,23 @@ struct ContentView: View {
         }) {
             VStack(spacing: 4) {
                 Image(systemName: "plus.circle.dashed")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.7))
-                Text("+ PLACE MODULE IN \(zone.displayName)")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
+                Text("+ EXPANSION SLOT: \(zone.displayName)")
                     .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
+                Text("Drag module here or tap ⇦ LW / ⇨ RW / ⇩ RACK on any card")
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.6))
             }
-            .padding(.vertical, 14)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 10)
             .frame(maxWidth: .infinity)
-            .background(Color.black.opacity(0.28))
+            .background(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.06))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
-                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.65))
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.4, dash: [6, 4]))
+                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.75))
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -8909,11 +10177,11 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "point.3.filled.connected.trianglepath.dotted")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("MIDI ROUTER")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -8961,6 +10229,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(10)
@@ -9490,11 +10759,11 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("SHOW CONTROL")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -9537,6 +10806,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(10)
@@ -10652,6 +11922,1626 @@ struct ContentView: View {
     }
 
     // ------------------------------------------------------------------------
+    // PROTOCOL TERMINAL STUDIO PANEL (NETWORK, MIDI, OSC & DMX TRAFFIC MONITOR)
+    // ------------------------------------------------------------------------
+    private func protocolTerminalStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .terminal, isSpotlight: isSpotlight)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight {
+                // Header (Uniform across all modules - never truncates)
+                HStack(spacing: 4) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "apple.terminal.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+
+                        Text("PROTOCOL TERMINAL")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+
+                        Circle()
+                            .fill(engine.isProtocolPaused ? Color.orange : Color(red: 0.2, green: 0.95, blue: 0.45))
+                            .frame(width: 5.5, height: 5.5)
+                            .shadow(color: engine.isProtocolPaused ? Color.orange : Color.green, radius: 3)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        engine.toggleSpotlightModule(.terminal)
+                    }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .terminal)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            // Top Primary Navigation Bar: [CONSOLE] [NETWORK] [SETTINGS] + Quick Settings Action
+            HStack(spacing: 4) {
+                HStack(spacing: 2) {
+                    ForEach(TerminalTab.allCases) { tab in
+                        Button(action: {
+                            engine.terminalTab = tab
+                            SoundEffect.keyTap.play(with: engine.soundPack)
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: tab.icon)
+                                    .font(.system(size: 7.2 * scale, weight: .bold))
+                                Text(tab.rawValue)
+                                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2.8)
+                            .background(engine.terminalTab == tab ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
+                            .foregroundColor(engine.terminalTab == tab ? .black : Color(white: 0.8))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Spacer(minLength: 2)
+
+                // Dedicated Settings Button
+                Button(action: {
+                    engine.terminalTab = (engine.terminalTab == .settings ? .console : .settings)
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 7.5 * scale, weight: .bold))
+                        Text(engine.terminalTab == .settings ? "EXIT" : "SETTINGS")
+                            .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(engine.terminalTab == .settings ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.09))
+                    .foregroundColor(engine.terminalTab == .settings ? .black : Color(white: 0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Configure receiving Port, IP & MIDI device for each protocol")
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2.5)
+            .background(Color.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+
+            // Body Switcher (Never clips; flexes & internally scrolls smoothly)
+            Group {
+                switch engine.terminalTab {
+                case .console:
+                    protocolTerminalConsoleContent(scale: scale)
+                case .network:
+                    protocolTerminalNetworkContent(scale: scale)
+                case .settings:
+                    protocolTerminalSettingsContent(scale: scale)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(9)
+        .background(isSpotlight ? Color.clear : Color.black.opacity(0.42))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(isSpotlight ? Color.clear : engine.currentTheme.sectionOutline.opacity(0.75), lineWidth: 1.2)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // ------------------------------------------------------------------------
+    // CONSOLE TAB CONTENT (LIVE PACKET FEED, FILTERS & PROMPT)
+    // ------------------------------------------------------------------------
+    private func protocolTerminalConsoleContent(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // Sub-Toolbar: Protocol Filter Pills & Actions (Pause, Clear, Copy, Mock Inject)
+            HStack(spacing: 4) {
+                // Filter Tabs: ALL, MIDI, OSC, DMX, SYS
+                HStack(spacing: 2) {
+                    ForEach([ProtocolEvent.EventType.all, .midiIn, .oscIn, .dmx, .sys], id: \.self) { filterType in
+                        Button(action: {
+                            engine.protocolFilter = filterType
+                            SoundEffect.keyTap.play(with: engine.soundPack)
+                        }) {
+                            Text(filterType == .all ? "ALL" : (filterType == .midiIn ? "MIDI" : (filterType == .oscIn ? "OSC" : filterType.rawValue)))
+                                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2.5)
+                                .background(engine.protocolFilter == filterType ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
+                                .foregroundColor(engine.protocolFilter == filterType ? .black : Color(white: 0.8))
+                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                // Status pill
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(engine.isOscListenerActive ? Color.green : Color.yellow)
+                        .frame(width: 4.5, height: 4.5)
+                    Text("UDP :\(engine.oscIncomingPort)")
+                        .font(.system(size: 6.8 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.75))
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.4))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                // Pause / Resume Toggle
+                Button(action: { engine.toggleProtocolLoggingPaused() }) {
+                    Image(systemName: engine.isProtocolPaused ? "play.circle.fill" : "pause.circle.fill")
+                        .font(.system(size: 8.5 * scale, weight: .bold))
+                        .foregroundColor(engine.isProtocolPaused ? Color.orange : Color(white: 0.85))
+                }
+                .buttonStyle(.plain)
+                .help(engine.isProtocolPaused ? "Resume live packet stream" : "Pause live packet stream")
+
+                // Clear
+                Button(action: { engine.clearProtocolLogs() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 8 * scale))
+                        .foregroundColor(Color(white: 0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Clear Terminal Logs")
+
+                // Copy
+                Button(action: { engine.exportProtocolLogsToClipboard() }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 8 * scale))
+                        .foregroundColor(Color(white: 0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Copy logs to Clipboard")
+
+                // Test Injection Menu
+                Menu {
+                    Button("Inject MIDI Note On (C4)") { engine.injectTestProtocolPacket(type: .midiIn) }
+                    Button("Inject MIDI CC #1 (Mod)") { engine.injectTestProtocolPacket(type: .midiOut) }
+                    Button("Inject OSC In (/qlab/cue/1/start)") { engine.injectTestProtocolPacket(type: .oscIn) }
+                    Button("Inject OSC Out (/live/volume)") { engine.injectTestProtocolPacket(type: .oscOut) }
+                    Button("Inject Art-Net DMX Universe 0") { engine.injectTestProtocolPacket(type: .dmx) }
+                    Button("Inject MSC Go Command") { engine.injectTestProtocolPacket(type: .msc) }
+                } label: {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 7.5 * scale))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                }
+                .menuStyle(.borderlessButton)
+                .help("Inject mock protocol packet for testing")
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2.5)
+            .background(Color.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+
+            // Main Console Feed
+            let filteredEvents = engine.protocolEvents.filter { event in
+                switch engine.protocolFilter {
+                case .all: return true
+                case .midiIn, .midiOut: return event.type == .midiIn || event.type == .midiOut
+                case .oscIn, .oscOut: return event.type == .oscIn || event.type == .oscOut
+                case .dmx: return event.type == .dmx
+                case .sys: return event.type == .sys || event.type == .msc
+                case .msc: return event.type == .msc
+                }
+            }
+
+            ZStack {
+                Color.black.opacity(0.55)
+
+                if filteredEvents.isEmpty {
+                    VStack(spacing: 5) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 15 * scale))
+                            .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.5))
+                        Text("LISTENING FOR PROTOCOL PACKETS...")
+                            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                            .foregroundColor(Color(white: 0.6))
+                        Text("Send OSC to UDP :\(engine.oscIncomingPort) or trigger CoreMIDI")
+                            .font(.system(size: 6.8 * scale, design: .monospaced))
+                            .foregroundColor(Color(white: 0.38))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView([.vertical], showsIndicators: true) {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(filteredEvents) { event in
+                                protocolEventRow(for: event, scale: scale)
+                            }
+                        }
+                        .padding(4)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
+
+            // Bottom Quick OSC Command / Packet Injector Bar
+            HStack(spacing: 4) {
+                Text("❯")
+                    .font(.system(size: 8 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+
+                TextField("/address [arg]...", text: $terminalQuickCommand)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 7.5 * scale, design: .monospaced))
+                    .foregroundColor(.white)
+                    .onSubmit {
+                        sendTerminalQuickCommand()
+                    }
+
+                Button("SEND") {
+                    sendTerminalQuickCommand()
+                }
+                .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(engine.currentTheme.accentPrimary)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(engine.currentTheme.accentPrimary.opacity(0.3), lineWidth: 0.8))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // ------------------------------------------------------------------------
+    // NETWORK TAB CONTENT (INTERFACES, ACTIVE RECEIVERS & TELEMETRY)
+    // ------------------------------------------------------------------------
+    private func protocolTerminalNetworkContent(scale: CGFloat) -> some View {
+        ScrollView([.vertical], showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 6) {
+                networkInterfacesCard(scale: scale)
+                activeReceiversCard(scale: scale)
+                telemetryCountersRow(scale: scale)
+                networkActionButtonsRow(scale: scale)
+            }
+            .padding(4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .layoutPriority(1)
+        .background(Color.black.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private func networkInterfacesCard(scale: CGFloat) -> some View {
+        let interfaces = getLocalNetworkInterfaces()
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "network")
+                    .font(.system(size: 8.5 * scale, weight: .bold))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                Text("HOST NETWORK INTERFACES")
+                    .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Text("TARGET IP ADDRESSES")
+                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.5))
+            }
+
+            ForEach(interfaces) { iface in
+                HStack {
+                    Circle()
+                        .fill(iface.isLoopback ? Color.blue : Color.green)
+                        .frame(width: 5 * scale, height: 5 * scale)
+                    Text(iface.name)
+                        .font(.system(size: 7 * scale, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color(white: 0.8))
+                    Spacer()
+                    Text(iface.ip)
+                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(iface.ip, forType: .string)
+                        SoundEffect.keyTap.play(with: engine.soundPack)
+                        engine.log("📋 Copied \(iface.ip) to clipboard")
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 6.5 * scale))
+                            .foregroundColor(Color(white: 0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy IP to clipboard")
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+        }
+        .padding(6)
+        .background(Color.black.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(engine.currentTheme.accentPrimary.opacity(0.25), lineWidth: 0.8))
+    }
+
+    private func activeReceiversCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 8.5 * scale, weight: .bold))
+                    .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
+                Text("ACTIVE PROTOCOL RECEIVERS")
+                    .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+            }
+
+            networkProtocolStatusRow(
+                title: "OSC UDP RECEIVER",
+                badge: engine.isOscListenerActive ? "ONLINE" : "READY",
+                badgeColor: engine.isOscListenerActive ? .green : .yellow,
+                details: "IP: \(engine.oscIncomingHost) | Port: \(engine.oscIncomingPort)",
+                packets: "\(engine.oscPacketsCount) pkts",
+                scale: scale
+            )
+
+            networkProtocolStatusRow(
+                title: "CORE MIDI RECEIVER",
+                badge: engine.isConnected ? "HARDWARE ONLINE" : "LISTENING",
+                badgeColor: engine.isConnected ? .green : Color(red: 0.2, green: 0.8, blue: 1.0),
+                details: "Dev: \(engine.selectedMidiInputDevice) | \(engine.selectedMidiInputChannel == 0 ? "Omni (All Ch)" : "Ch \(engine.selectedMidiInputChannel)")",
+                packets: "\(engine.midiPacketsCount) msgs",
+                scale: scale
+            )
+
+            networkProtocolStatusRow(
+                title: "ART-NET 4 DMX",
+                badge: engine.isArtNetListenerActive ? "ONLINE" : "READY",
+                badgeColor: engine.isArtNetListenerActive ? .green : .yellow,
+                details: "IP: \(engine.artNetIncomingHost) | Port: \(engine.artNetIncomingPort) | Univ: \(engine.artNetIncomingUniverse)",
+                packets: "\(engine.dmxPacketsCount) frames",
+                scale: scale
+            )
+
+            networkProtocolStatusRow(
+                title: "sACN ANSI E1.31",
+                badge: engine.issACNListenerActive ? "ONLINE" : "READY",
+                badgeColor: engine.issACNListenerActive ? .green : .yellow,
+                details: "Port: \(engine.sacnIncomingPort) | Univ: \(engine.sacnIncomingUniverse)",
+                packets: "\(engine.dmxPacketsCount) frames",
+                scale: scale
+            )
+
+            networkProtocolStatusRow(
+                title: "MIDI SHOW CONTROL (MSC)",
+                badge: "ACTIVE",
+                badgeColor: Color(red: 0.85, green: 0.45, blue: 1.0),
+                details: "Dev ID: \(engine.mscDeviceID) | Format: \(engine.mscCommandFormat.rawValue)",
+                packets: "\(engine.mscPacketsCount) cues",
+                scale: scale
+            )
+        }
+        .padding(6)
+        .background(Color.black.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 0.8))
+    }
+
+    private func telemetryCountersRow(scale: CGFloat) -> some View {
+        HStack(spacing: 4) {
+            telemetryCounterPill(title: "TOTAL RX", value: "\(engine.totalPacketsReceived)", color: engine.currentTheme.accentPrimary, scale: scale)
+            telemetryCounterPill(title: "MIDI RX", value: "\(engine.midiPacketsCount)", color: Color(red: 0.2, green: 0.95, blue: 0.5), scale: scale)
+            telemetryCounterPill(title: "OSC RX", value: "\(engine.oscPacketsCount)", color: Color(red: 1.0, green: 0.65, blue: 0.2), scale: scale)
+            telemetryCounterPill(title: "DMX RX", value: "\(engine.dmxPacketsCount)", color: Color(red: 0.95, green: 0.85, blue: 0.25), scale: scale)
+            telemetryCounterPill(title: "MSC RX", value: "\(engine.mscPacketsCount)", color: Color(red: 0.45, green: 0.75, blue: 1.0), scale: scale)
+        }
+    }
+
+    private func networkActionButtonsRow(scale: CGFloat) -> some View {
+        HStack(spacing: 4) {
+            Button(action: {
+                engine.terminalTab = .settings
+                SoundEffect.keyTap.play(with: engine.soundPack)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 7.5 * scale, weight: .bold))
+                    Text("CONFIGURE RECEIVING PORTS & DEVICES")
+                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(engine.currentTheme.accentPrimary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+                engine.scanForBitchBoy()
+                SoundEffect.keyTap.play(with: engine.soundPack)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 7.5 * scale, weight: .bold))
+                    Text("RE-SCAN")
+                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func networkProtocolStatusRow(title: String, badge: String, badgeColor: Color, details: String, packets: String, scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(badge)
+                    .font(.system(size: 6.2 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1)
+                    .background(badgeColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 2.5))
+            }
+            HStack {
+                Text(details)
+                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .foregroundColor(Color(white: 0.7))
+                Spacer()
+                Text(packets)
+                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(badgeColor)
+            }
+        }
+        .padding(4.5)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func telemetryCounterPill(title: String, value: String, color: Color, scale: CGFloat) -> some View {
+        VStack(spacing: 1.5) {
+            Text(title)
+                .font(.system(size: 5.8 * scale, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(white: 0.55))
+            Text(value)
+                .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(color)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 3)
+        .background(Color.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.35), lineWidth: 0.8))
+    }
+
+    // ------------------------------------------------------------------------
+    // SETTINGS TAB CONTENT (DECOMPOSED CARDS FOR MAXIMUM COMPILER EFFICIENCY)
+    // ------------------------------------------------------------------------
+    private func protocolTerminalSettingsContent(scale: CGFloat) -> some View {
+        ScrollView([.vertical], showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 8) {
+                settingsTopHeader(scale: scale)
+                oscSettingsCard(scale: scale)
+                midiSettingsCard(scale: scale)
+                artNetSettingsCard(scale: scale)
+                sacnSettingsCard(scale: scale)
+                mscSettingsCard(scale: scale)
+                settingsBottomSaveButton(scale: scale)
+            }
+            .padding(4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .layoutPriority(1)
+        .background(Color.black.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private func settingsTopHeader(scale: CGFloat) -> some View {
+        HStack {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 8.5 * scale, weight: .bold))
+                .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
+            Text("PROTOCOL RECEIVING CONFIGURATION")
+                .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.white)
+            Spacer()
+            Button(action: {
+                engine.terminalTab = .console
+                SoundEffect.keyTap.play(with: engine.soundPack)
+            }) {
+                Text("DONE")
+                    .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(engine.currentTheme.accentPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func oscSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Image(systemName: "wave.3.forward.circle.fill")
+                    .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.2))
+                Text("1. OSC (OPEN SOUND CONTROL) RECEIVER")
+                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Circle()
+                    .fill(engine.isOscListenerActive ? Color.green : Color.yellow)
+                    .frame(width: 5, height: 5)
+            }
+
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING PORT:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("8000", value: Binding(get: { Int(engine.oscIncomingPort) }, set: { engine.oscIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .frame(width: 75 * scale)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING IP / BIND HOST:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("0.0.0.0 (All Interfaces)", text: $engine.oscIncomingHost)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                }
+            }
+
+            HStack(spacing: 3) {
+                Text("PRESETS:")
+                    .font(.system(size: 6.2 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.5))
+                ForEach([(8000, "8000 (Default)"), (53000, "53000 (QLab)"), (9000, "9000 (Resolume)"), (7000, "7000 (TouchOSC)")], id: \.0) { portVal, label in
+                    Button(action: {
+                        engine.oscIncomingPort = UInt16(portVal)
+                        engine.startOSCListener(port: UInt16(portVal), host: engine.oscIncomingHost)
+                        SoundEffect.keyTap.play(with: engine.soundPack)
+                    }) {
+                        Text(label)
+                            .font(.system(size: 6.2 * scale, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(engine.oscIncomingPort == UInt16(portVal) ? Color(red: 1.0, green: 0.65, blue: 0.2).opacity(0.3) : Color.white.opacity(0.06))
+                            .foregroundColor(engine.oscIncomingPort == UInt16(portVal) ? Color(red: 1.0, green: 0.65, blue: 0.2) : Color(white: 0.75))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Button(action: {
+                engine.updateOSCReceiver(port: engine.oscIncomingPort, host: engine.oscIncomingHost)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.clockwise")
+                    Text("APPLY & RESTART OSC LISTENER")
+                }
+                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(red: 1.0, green: 0.65, blue: 0.2))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 1.0, green: 0.65, blue: 0.2).opacity(0.3), lineWidth: 0.8))
+    }
+
+    private func midiSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Image(systemName: "pianokeys.fill")
+                    .foregroundColor(Color(red: 0.2, green: 0.95, blue: 0.5))
+                Text("2. CORE MIDI RECEIVING DEVICE & CHANNEL")
+                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Circle()
+                    .fill(engine.isConnected ? Color.green : Color.yellow)
+                    .frame(width: 5, height: 5)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("RECEIVING MIDI INPUT DEVICE:")
+                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.6))
+                Picker("", selection: $engine.selectedMidiInputDevice) {
+                    Text("OMNI // ALL CONNECTED MIDI DEVICES").tag("ALL")
+                    Text("AUTO-DETECT (BITCHBOY HARDWARE ONLY)").tag("AUTO")
+                    ForEach(engine.availableInputSources, id: \.self) { srcName in
+                        Text(srcName).tag(srcName)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: engine.selectedMidiInputDevice) { newDev in
+                    engine.updateMIDIReceiver(device: newDev, channel: engine.selectedMidiInputChannel)
+                }
+            }
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING CHANNEL:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    Picker("", selection: $engine.selectedMidiInputChannel) {
+                        Text("OMNI (ALL CHANNELS)").tag(0)
+                        ForEach(1...16, id: \.self) { ch in
+                            Text("CHANNEL \(ch)").tag(ch)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 140 * scale)
+                    .onChange(of: engine.selectedMidiInputChannel) { newCh in
+                        engine.updateMIDIReceiver(device: engine.selectedMidiInputDevice, channel: newCh)
+                    }
+                }
+
+                Spacer()
+
+                Button(action: {
+                    engine.scanForBitchBoy()
+                    SoundEffect.keyTap.play(with: engine.soundPack)
+                    engine.log("🔄 Scanned CoreMIDI: \(engine.availableInputSources.count) input sources available")
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("RE-SCAN MIDI")
+                    }
+                    .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Color(red: 0.2, green: 0.95, blue: 0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.2, green: 0.95, blue: 0.5).opacity(0.3), lineWidth: 0.8))
+    }
+
+    private func artNetSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Image(systemName: "lightbulb.fill")
+                    .foregroundColor(Color(red: 0.95, green: 0.85, blue: 0.25))
+                Text("3. ART-NET 4 DMX RECEIVER")
+                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Toggle("", isOn: $engine.isArtNetListenerActive)
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.65)
+                    .onChange(of: engine.isArtNetListenerActive) { active in
+                        if active {
+                            engine.startArtNetListener(port: engine.artNetIncomingPort)
+                        } else {
+                            engine.stopArtNetListener()
+                        }
+                    }
+            }
+
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING UDP PORT:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("6454", value: Binding(get: { Int(engine.artNetIncomingPort) }, set: { engine.artNetIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .frame(width: 75 * scale)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING IP / BIND:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("0.0.0.0", text: $engine.artNetIncomingHost)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("UNIVERSE:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("0", value: Binding(get: { Int(engine.artNetIncomingUniverse) }, set: { engine.artNetIncomingUniverse = UInt16(clamping: $0) }), formatter: NumberFormatter())
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .frame(width: 50 * scale)
+                }
+            }
+
+            Button(action: {
+                engine.updateArtNetReceiver(port: engine.artNetIncomingPort, host: engine.artNetIncomingHost, universe: engine.artNetIncomingUniverse)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.clockwise")
+                    Text("APPLY & RESTART ART-NET LISTENER")
+                }
+                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(red: 0.95, green: 0.85, blue: 0.25))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.95, green: 0.85, blue: 0.25).opacity(0.3), lineWidth: 0.8))
+    }
+
+    private func sacnSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Image(systemName: "sparkles")
+                    .foregroundColor(Color(red: 0.3, green: 0.85, blue: 1.0))
+                Text("4. sACN (ANSI E1.31) RECEIVER")
+                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Toggle("", isOn: $engine.issACNListenerActive)
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.65)
+                    .onChange(of: engine.issACNListenerActive) { active in
+                        if active {
+                            engine.startsACNListener(port: engine.sacnIncomingPort)
+                        } else {
+                            engine.stopsACNListener()
+                        }
+                    }
+            }
+
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING UDP PORT:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("5568", value: Binding(get: { Int(engine.sacnIncomingPort) }, set: { engine.sacnIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .frame(width: 75 * scale)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MULTICAST / UNICAST IP:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("0.0.0.0 (All Multicast)", text: $engine.sacnIncomingHost)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("UNIVERSE:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    TextField("1", value: Binding(get: { Int(engine.sacnIncomingUniverse) }, set: { engine.sacnIncomingUniverse = UInt16(clamping: $0) }), formatter: NumberFormatter())
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .frame(width: 50 * scale)
+                }
+            }
+
+            Button(action: {
+                engine.updatesACNReceiver(port: engine.sacnIncomingPort, host: engine.sacnIncomingHost, universe: engine.sacnIncomingUniverse)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.clockwise")
+                    Text("APPLY & RESTART sACN LISTENER")
+                }
+                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(red: 0.3, green: 0.85, blue: 1.0))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.3, green: 0.85, blue: 1.0).opacity(0.3), lineWidth: 0.8))
+    }
+
+    private func mscSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Image(systemName: "theatermasks.fill")
+                    .foregroundColor(Color(red: 0.85, green: 0.45, blue: 1.0))
+                Text("5. MSC (MIDI SHOW CONTROL) RECEIVER")
+                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECEIVING DEVICE ID (0..127):")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    Picker("", selection: $engine.mscDeviceID) {
+                        Text("1 (Default)").tag(UInt8(1))
+                        ForEach(0..<16) { id in
+                            if id != 1 {
+                                Text("\(id)").tag(UInt8(id))
+                            }
+                        }
+                        Text("127 (All)").tag(UInt8(127))
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 90 * scale)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("COMMAND FORMAT:")
+                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.6))
+                    Picker("", selection: $engine.mscCommandFormat) {
+                        ForEach(MSCCommandFormat.allCases) { fmt in
+                            Text(fmt.label).tag(fmt)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+            }
+
+            Toggle(isOn: $engine.mscAutoTriggerOnInbound) {
+                Text("Auto-Trigger Cues on Incoming MSC Commands")
+                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .foregroundColor(Color(white: 0.8))
+            }
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.85, green: 0.45, blue: 1.0).opacity(0.3), lineWidth: 0.8))
+    }
+
+    private func settingsBottomSaveButton(scale: CGFloat) -> some View {
+        Button(action: {
+            engine.saveProtocolSettings()
+            engine.terminalTab = .console
+            SoundEffect.presetSwitch.play(with: engine.soundPack)
+            engine.log("💾 All Protocol Receiving Settings Saved & Applied")
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("SAVE & APPLY ALL PROTOCOL SETTINGS")
+            }
+            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+            .foregroundColor(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(engine.currentTheme.accentPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: 4.5))
+        }
+        .buttonStyle(.plain)
+    }
+
+
+        private func protocolEventRow(for event: ProtocolEvent, scale: CGFloat) -> some View {
+        let df = DateFormatter()
+        df.dateFormat = "HH:mm:ss.SSS"
+        let timeStr = df.string(from: event.timestamp)
+
+        return HStack(alignment: .top, spacing: 4) {
+            // Timestamp
+            Text(timeStr)
+                .font(.system(size: 6.8 * scale, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(white: 0.45))
+                .lineLimit(1)
+                .frame(width: 58 * scale, alignment: .leading)
+
+            // Protocol Type Badge
+            Text(event.type.rawValue)
+                .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 3.5)
+                .padding(.vertical, 1)
+                .background(event.type.tagColor)
+                .clipShape(RoundedRectangle(cornerRadius: 2.5))
+                .frame(width: 48 * scale, alignment: .leading)
+
+            // Command / Address
+            Text(event.command)
+                .font(.system(size: 7.2 * scale, weight: .bold, design: .monospaced))
+                .foregroundColor(event.type.tagColor)
+                .lineLimit(1)
+
+            // Details / Args
+            if !event.details.isEmpty {
+                Text(event.details)
+                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .foregroundColor(Color(white: 0.72))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 2)
+
+            // Raw Hex preview
+            if !event.rawHex.isEmpty {
+                Text(event.rawHex)
+                    .font(.system(size: 6.2 * scale, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(white: 0.38))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 1.5)
+        .padding(.horizontal, 3)
+        .background(Color.white.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+
+    private func sendTerminalQuickCommand() {
+        let trimmed = terminalQuickCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if trimmed.starts(with: "/") {
+            engine.sendOSC(host: engine.customOSCHost, port: engine.customOSCPort, address: trimmed)
+            engine.recordProtocolEvent(type: .oscOut, command: trimmed, details: "Sent via Terminal prompt", rawHex: "", channel: "\(engine.customOSCHost):\(engine.customOSCPort)")
+        } else if trimmed.lowercased().starts(with: "note") {
+            let parts = trimmed.split(separator: " ")
+            let noteNum = parts.count > 1 ? (UInt8(parts[1]) ?? 60) : 60
+            let vel = parts.count > 2 ? (UInt8(parts[2]) ?? 100) : 100
+            engine.sendNoteOn(note: noteNum, velocity: vel)
+        } else {
+            engine.recordProtocolEvent(type: .sys, command: "USER COMMAND", details: trimmed, rawHex: "", channel: "Prompt")
+        }
+        terminalQuickCommand = ""
+        SoundEffect.keyTap.play(with: engine.soundPack)
+    }
+
+
+    // ------------------------------------------------------------------------
+    // HARDWARE STUDIO MODULE PANELS (BUTTONS, KNOBS, FADERS & COLOR PICKER HUD)
+    // ------------------------------------------------------------------------
+
+    private func keyGridStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .keyGrid8x4, isSpotlight: isSpotlight)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.grid.4x3.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("8X4 KEY GRID")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.keyGrid8x4) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .keyGrid8x4)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            // Quick Actions Bar (Select All / Deselect / Color Swatches)
+            HStack(spacing: 4) {
+                Button(action: {
+                    engine.selectedIndices = Set(0..<32)
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("SELECT ALL 32")
+                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    engine.selectedIndices.removeAll()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("DESELECT")
+                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .foregroundColor(Color(white: 0.75))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 2)
+
+                // Quick Color Swatches
+                HStack(spacing: 3) {
+                    ForEach([0, 3, 33, 41, 67, 72, 87, 95], id: \.self) { vel in
+                        Circle()
+                            .fill(ledColor(UInt8(vel)))
+                            .frame(width: 10 * scale, height: 10 * scale)
+                            .onTapGesture {
+                                let targets = engine.selectedIndices.isEmpty ? Array(0..<32) : Array(engine.selectedIndices.filter { $0 < 32 })
+                                for idx in targets {
+                                    engine.controls[idx].activeVelocity = UInt8(vel)
+                                    engine.controls[idx].idleVelocity = UInt8(vel)
+                                    engine.controls[idx].currentLED = UInt8(vel)
+                                    engine.sendNoteOn(note: engine.controls[idx].number, velocity: UInt8(vel))
+                                }
+                                engine.saveCurrentSlot()
+                                SoundEffect.knobTick.play(with: engine.soundPack)
+                            }
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+
+            // The 8x4 Grid
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                VStack(spacing: 4) {
+                    ForEach(0..<4, id: \.self) { r in
+                        HStack(spacing: 4) {
+                            ForEach(0..<8, id: \.self) { c in
+                                let idx = r * 8 + c
+                                HardwareKeyCap(
+                                    item: engine.controls[idx],
+                                    isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
+                                    color: ledColor(engine.controls[idx].currentLED),
+                                    sectionBorder: engine.currentTheme.sectionOutline,
+                                    onTap: {
+                                        isEditingNameBox = false
+                                        let isShift = NSEvent.modifierFlags.contains(.shift)
+                                        engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
+                                    }
+                                )
+                                .equatable()
+                            }
+                        }
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.85))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func keyStripStudioPanel(isSpotlight: Bool = false) -> some View {
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "rectangle.split.3x1.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("1X8 KEY STRIP")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.keyStrip1x8) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .keyStrip1x8)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            ScrollView([.horizontal], showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(32..<40, id: \.self) { idx in
+                        HardwareKeyCap(
+                            item: engine.controls[idx],
+                            isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
+                            color: ledColor(engine.controls[idx].currentLED),
+                            sectionBorder: engine.currentTheme.sectionOutline,
+                            onTap: {
+                                isEditingNameBox = false
+                                let isShift = NSEvent.modifierFlags.contains(.shift)
+                                engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
+                            }
+                        )
+                        .equatable()
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.85))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func verticalFadersStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .verticalFaders, isSpotlight: isSpotlight)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "slider.vertical.3")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("8 VERTICAL FADERS")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.verticalFaders) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .verticalFaders)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            // Quick Fader Actions: Zero All / Center All / Full / VU Meter
+            HStack(spacing: 4) {
+                Button(action: {
+                    for idx in 49..<57 { engine.setControlLiveValue(index: idx, value: 0) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("ZERO ALL (0)")
+                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    for idx in 49..<57 { engine.setControlLiveValue(index: idx, value: 64) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("CENTER (64)")
+                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    for idx in 49..<57 { engine.setControlLiveValue(index: idx, value: 127) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }) {
+                    Text("FULL (127)")
+                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 2)
+
+                Button(action: {
+                    engine.vuMeterLEDsEnabled.toggle()
+                    if engine.vuMeterLEDsEnabled {
+                        engine.applyFXMode(.vuMeter)
+                    } else {
+                        engine.applyFXMode(.staticFX)
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "slider.vertical.3")
+                        Text(engine.vuMeterLEDsEnabled ? "VU: ON" : "VU: OFF")
+                    }
+                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.black.opacity(0.5))
+                    .foregroundColor(engine.vuMeterLEDsEnabled ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(white: 0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 4)
+
+            ScrollView([.horizontal], showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(49..<57, id: \.self) { idx in
+                        HardwareVerticalFader(
+                            item: engine.controls[idx],
+                            isSelected: engine.selectedIndex == idx,
+                            onSelect: { engine.selectedIndex = idx },
+                            onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
+                        )
+                        .equatable()
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(Color.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func horizontalFadersStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .horizontalFaders, isSpotlight: isSpotlight)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "slider.horizontal.below.rectangle")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("4 HORIZONTAL FADERS")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.horizontalFaders) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .horizontalFaders)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            HStack(spacing: 4) {
+                Button("ZERO ALL (0)") {
+                    for idx in 57..<61 { engine.setControlLiveValue(index: idx, value: 0) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                Button("CENTER (64)") {
+                    for idx in 57..<61 { engine.setControlLiveValue(index: idx, value: 64) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 3) {
+                ForEach(57..<61, id: \.self) { idx in
+                    HardwareHorizontalFader(
+                        item: engine.controls[idx],
+                        isSelected: engine.selectedIndex == idx,
+                        onSelect: { engine.selectedIndex = idx },
+                        onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
+                    )
+                    .equatable()
+                }
+            }
+            .padding(6)
+            .background(Color.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func rotaryKnobsStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .rotaryKnobs, isSpotlight: isSpotlight)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "dial.low.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("2X4 ROTARY KNOBS")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.rotaryKnobs) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .rotaryKnobs)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            HStack(spacing: 4) {
+                Button("CENTER ALL (64)") {
+                    for idx in 61..<69 { engine.setControlLiveValue(index: idx, value: 64) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                Button("ZERO ALL (0)") {
+                    for idx in 61..<69 { engine.setControlLiveValue(index: idx, value: 0) }
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            ScrollView([.vertical], showsIndicators: false) {
+                VStack(spacing: 4) {
+                    ForEach(0..<4, id: \.self) { r in
+                        HStack(spacing: 8) {
+                            ForEach(0..<2, id: \.self) { c in
+                                let idx = 61 + r * 2 + c
+                                HardwareKnob(
+                                    item: engine.controls[idx],
+                                    isSelected: engine.selectedIndex == idx,
+                                    onSelect: { engine.selectedIndex = idx },
+                                    onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
+                                )
+                                .equatable()
+                            }
+                        }
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(Color.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func keypadStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .keypad3x3, isSpotlight: isSpotlight)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "circle.grid.3x3.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("3X3 KEYPAD")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.keypad3x3) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .keypad3x3)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            // Mascot & Speech bubble
+            ZStack(alignment: .top) {
+                if engine.mascotSpeechVisible {
+                    Text(engine.mascotSpeech)
+                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.85))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(engine.currentTheme.accentPrimary, lineWidth: 1))
+                        .offset(y: -14)
+                        .transition(.scale.combined(with: .opacity))
+                }
+
+                BitchBoyOfficialMascotView(auraColor: engine.currentTheme.accentPrimary) {
+                    engine.triggerMascotTap()
+                }
+                .scaleEffect(engine.mascotScale)
+                .animation(.spring(response: 0.25, dampingFraction: 0.5), value: engine.mascotScale)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            // 3x3 Grid
+            VStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { r in
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { c in
+                            let idx = 40 + r * 3 + c
+                            HardwareKeyCap(
+                                item: engine.controls[idx],
+                                isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
+                                color: ledColor(engine.controls[idx].currentLED),
+                                sectionBorder: engine.currentTheme.sectionOutline,
+                                onTap: {
+                                    isEditingNameBox = false
+                                    let isShift = NSEvent.modifierFlags.contains(.shift)
+                                    engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
+                                }
+                            )
+                            .equatable()
+                        }
+                    }
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func colorPickerStudioPanel(isSpotlight: Bool = false) -> some View {
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("COLOR PICKER // HUD")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.currentTheme.accentPrimary)
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { engine.toggleSpotlightModule(.colorPickerHUD) }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .colorPickerHUD)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            ScrollView([.vertical], showsIndicators: true) {
+                centerInspectorHUD
+                    .padding(4)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // ------------------------------------------------------------------------
     // LEFT WING (RED BOX #3): HARDWARE MEMORY SLOTS & CUSTOM PRESET BANK DECK
     // ------------------------------------------------------------------------
     private func leftWingMemorySlotsPanel(isSpotlight: Bool = false) -> some View {
@@ -10668,12 +13558,12 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "memorychip.fill")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(activeSlotColor)
                             .shadow(color: activeSlotColor.opacity(0.8), radius: 4)
 
                         Text("MEMORY SLOTS")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -11014,6 +13904,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(9)
@@ -11037,11 +13928,11 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "wand.and.stars")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("CUSTOM FX")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -11091,6 +13982,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(10)
@@ -11104,8 +13996,8 @@ struct ContentView: View {
 
     private var rightWingFrameSequencerContent: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Show Name + Play/Save Row
-            HStack(spacing: 4) {
+            // Show Name + Play/Save Row (Clean layout that never overflows or truncates)
+            HStack(spacing: 5) {
                 TextField("Show Name", text: $engine.editingCustomFX.name)
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .textFieldStyle(.plain)
@@ -11114,6 +14006,7 @@ struct ContentView: View {
                     .background(Color.black.opacity(0.55))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                    .layoutPriority(1)
 
                 Button(action: {
                     if engine.isPlayingCustomFX {
@@ -11135,6 +14028,7 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: true, vertical: false)
 
                 Button(action: {
                     engine.saveEditingCustomFXToLibrary()
@@ -11148,43 +14042,46 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: true, vertical: false)
+            }
 
+            // Sub-row: ON-CONNECT Quick Action + Main 49 Keys Canvas Paint Toggle
+            HStack(spacing: 5) {
                 let isCurrentConnectFX = (engine.connectCustomFXName == engine.editingCustomFX.name && engine.connectEffectEnabled)
                 Button(action: {
                     engine.saveEditingCustomFXToLibrary()
                     engine.setAsOnConnectFX(engine.editingCustomFX)
                 }) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 3) {
                         Image(systemName: isCurrentConnectFX ? "bolt.circle.fill" : "bolt.fill")
-                        Text(isCurrentConnectFX ? "ON-CONNECT" : "SET CONNECT")
+                        Text(isCurrentConnectFX ? "ON-CONNECT FX" : "SET AS ON-CONNECT")
                     }
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 4.5)
                     .background(isCurrentConnectFX ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
                     .foregroundColor(isCurrentConnectFX ? .black : Color(red: 0.96, green: 0.78, blue: 0.25))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
-            }
+                .fixedSize(horizontal: true, vertical: false)
 
-            // Toggle to paint directly on the big 49-key BitchBoy console!
-            Button(action: {
-                engine.paintOnMainChassis.toggle()
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: engine.paintOnMainChassis ? "paintbrush.pointed.fill" : "paintbrush")
-                    Text(engine.paintOnMainChassis ? "PAINTING ON MAIN 49 KEYS: ON" : "CLICK TO PAINT ON MAIN 49 KEYS")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                    Spacer()
+                Button(action: {
+                    engine.paintOnMainChassis.toggle()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: engine.paintOnMainChassis ? "paintbrush.pointed.fill" : "paintbrush")
+                        Text(engine.paintOnMainChassis ? "PAINTING: ON" : "PAINT ON 49 KEYS")
+                    }
+                    .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4.5)
+                    .background(engine.paintOnMainChassis ? Color(red: 0.95, green: 0.50, blue: 0.15) : Color.white.opacity(0.08))
+                    .foregroundColor(engine.paintOnMainChassis ? .black : engine.currentTheme.accentPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(engine.paintOnMainChassis ? Color(red: 0.95, green: 0.50, blue: 0.15) : Color.white.opacity(0.08))
-                .foregroundColor(engine.paintOnMainChassis ? .black : engine.currentTheme.accentPrimary)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Interactive 49-Key Mini Canvas Preview & Painter
             VStack(alignment: .leading, spacing: 3) {
@@ -11221,7 +14118,8 @@ struct ContentView: View {
                     }
                 }
 
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .center, spacing: 18) {
+                    Spacer()
                     // Mini 8x4 + 1x8
                     VStack(spacing: 3) {
                         ForEach(0..<4, id: \.self) { r in
@@ -11240,6 +14138,10 @@ struct ContentView: View {
                         }
                     }
 
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 1, height: 75)
+
                     // Mini 3x3 Keypad
                     VStack(spacing: 2) {
                         Text("3x3")
@@ -11254,6 +14156,7 @@ struct ContentView: View {
                             }
                         }
                     }
+                    Spacer()
                 }
                 .padding(6)
                 .frame(maxWidth: .infinity)
@@ -11675,12 +14578,12 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "waveform.circle.fill")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(isEnabled ? activeColor : Color(white: 0.5))
                             .shadow(color: isEnabled ? activeColor.opacity(0.85) : .clear, radius: 4)
 
                         Text("REACTIVE FX")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -11748,7 +14651,7 @@ struct ContentView: View {
 
             ScrollView([.vertical], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 6) {
-                    // 6 Interactive Mechanical Keyboard FX Mode Pads (2x3 Grid - doubles in size when expanded!)
+                    // 6 Interactive Mechanical Keyboard FX Mode Pads (2x3 Grid)
                     let modes: [ReactiveKeyFXMode] = [.ripple, .crossLaser, .supernova, .heatTrail, .meteorRain, .arcLightning]
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 5 * scale), GridItem(.flexible(), spacing: 5 * scale), GridItem(.flexible(), spacing: 5 * scale)], spacing: 5 * scale) {
                         ForEach(modes) { mode in
@@ -11766,7 +14669,7 @@ struct ContentView: View {
                                         .foregroundColor(isSel ? .black : .white)
                                         .lineLimit(1)
                                 }
-                                .frame(maxWidth: .infinity, minHeight: isExp ? 74 : 36)
+                                .frame(maxWidth: .infinity, minHeight: isExp ? 48 : 34)
                                 .padding(.vertical, 5.5 * scale)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
@@ -11866,9 +14769,6 @@ struct ContentView: View {
                     .padding(5 * scale)
                     .background(Color.black.opacity(0.4))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .padding(5 * scale)
-                    .background(Color.black.opacity(0.4))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     // Interactive Test Pulse Button + Live Active Wave Counter (doubles in size when expanded)
                     HStack(spacing: 6) {
@@ -11901,6 +14801,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(9)
@@ -12012,6 +14913,28 @@ struct ContentView: View {
                     .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
+                if engine.detachedModules.contains(.keyGrid8x4) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Button(action: {
+                    engine.popOutModuleToWindow(.keyGrid8x4)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out 8x4 Key Grid into Floating Window")
+
                 Text("CLICK KEY OR PRESS BITCHBOY")
                     .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(red: 0.15, green: 0.85, blue: 0.95))
@@ -12060,6 +14983,28 @@ struct ContentView: View {
                     .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
+                if engine.detachedModules.contains(.keyStrip1x8) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Button(action: {
+                    engine.popOutModuleToWindow(.keyStrip1x8)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out 1x8 Key Strip into Floating Window")
+
                 Text("ICON SHOWS MAPPED ACTION")
                     .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
@@ -12102,6 +15047,15 @@ struct ContentView: View {
                     .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
                 Spacer()
+                if engine.detachedModules.contains(.verticalFaders) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
                 Button(action: {
                     engine.vuMeterLEDsEnabled.toggle()
                     if engine.vuMeterLEDsEnabled {
@@ -12123,6 +15077,19 @@ struct ContentView: View {
                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.5), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+
+                Button(action: {
+                    engine.popOutModuleToWindow(.verticalFaders)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out Vertical Faders into Floating Window")
             }
             .frame(width: 410)
 
@@ -12149,9 +15116,33 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section5HorizontalFaders: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("5. 4 HORIZONTAL FADERS (CC 8–11)")
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                .foregroundColor(engine.currentTheme.headerText)
+            HStack {
+                Text("5. 4 HORIZONTAL FADERS (CC 8–11)")
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.headerText)
+                Spacer()
+                if engine.detachedModules.contains(.horizontalFaders) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Button(action: {
+                    engine.popOutModuleToWindow(.horizontalFaders)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out Horizontal Faders into Floating Window")
+            }
 
             VStack(spacing: 3) {
                 ForEach(57..<61, id: \.self) { idx in
@@ -12175,9 +15166,33 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section6RotaryKnobs: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("6. 2X4 KNOBS (CC 20–27)")
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                .foregroundColor(engine.currentTheme.headerText)
+            HStack {
+                Text("6. 2X4 KNOBS (CC 20–27)")
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.headerText)
+                Spacer()
+                if engine.detachedModules.contains(.rotaryKnobs) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Button(action: {
+                    engine.popOutModuleToWindow(.rotaryKnobs)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out Rotary Knobs into Floating Window")
+            }
 
             VStack(spacing: 4) {
                 ForEach(0..<4, id: \.self) { r in
@@ -12239,23 +15254,80 @@ struct ContentView: View {
 
             // Inspector Content
             VStack(alignment: .leading, spacing: 6) {
-                // Header badge
-                HStack {
-                    Text("\(selectedControl.label) // N\(selectedControl.number)")
-                        .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(engine.currentTheme.accentPrimary)
-                        .foregroundColor(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                // Header badge with Stepper and Pop-Out
+                HStack(spacing: 4) {
+                    HStack(spacing: 2.5) {
+                        Button(action: {
+                            if engine.selectedIndex > 0 {
+                                engine.selectedIndex -= 1
+                                SoundEffect.knobTick.play(with: engine.soundPack)
+                            }
+                        }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 7.5, weight: .bold))
+                                .frame(width: 16, height: 18)
+                                .background(Color.white.opacity(0.12))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Previous Key/Control")
+
+                        Text("\(selectedControl.label) // N\(selectedControl.number)")
+                            .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(engine.currentTheme.accentPrimary)
+                            .foregroundColor(.black)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                        Button(action: {
+                            if engine.selectedIndex < engine.controls.count - 1 {
+                                engine.selectedIndex += 1
+                                SoundEffect.knobTick.play(with: engine.soundPack)
+                            }
+                        }) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 7.5, weight: .bold))
+                                .frame(width: 16, height: 18)
+                                .background(Color.white.opacity(0.12))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Next Key/Control")
+                    }
 
                     Spacer()
 
+                    if engine.detachedModules.contains(.colorPickerHUD) {
+                        Text("POPPED OUT")
+                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .foregroundColor(Color.cyan)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.cyan.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+
+                    Button(action: {
+                        engine.popOutModuleToWindow(.colorPickerHUD)
+                    }) {
+                        Image(systemName: "macwindow.badge.plus")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                            .padding(3)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Pop Out Color Picker / HUD into Floating Window")
+
                     // Multi-select indicator badge
                     if engine.selectedIndices.count > 1 {
-                        Text("\(engine.selectedIndices.count) SELECTED")
+                        Text("\(engine.selectedIndices.count) SEL")
                             .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
+                            .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(Color.cyan)
                             .foregroundColor(.black)
@@ -12263,21 +15335,22 @@ struct ContentView: View {
                     }
 
                     // Key color swatch preview & formatted label
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 4)
+                    HStack(spacing: 3) {
+                        RoundedRectangle(cornerRadius: 3)
                             .fill(ledColor(selectedControl.currentLED))
-                            .frame(width: 14, height: 14)
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.4), lineWidth: 1))
+                            .frame(width: 13, height: 13)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.4), lineWidth: 1))
                         Text(BitchBoyHardwareColor.formattedLabel(for: selectedControl.currentLED))
                             .font(.system(size: 7, weight: .heavy, design: .monospaced))
                             .foregroundColor(ledColor(selectedControl.currentLED))
+                            .lineLimit(1)
                     }
                 }
 
                 // Custom Name Editor (Only opens for typing when explicitly clicked!)
                 HStack(spacing: 4) {
                     Text("NAME:")
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
 
                     if isEditingNameBox {
@@ -12838,9 +15911,33 @@ struct ContentView: View {
             }
             .padding(.top, 12)
 
-            Text("3. 3X3 KEYPAD (9 KEYS)")
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                .foregroundColor(engine.currentTheme.headerText)
+            HStack {
+                Text("3. 3X3 KEYPAD (9 KEYS)")
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.headerText)
+                Spacer()
+                if engine.detachedModules.contains(.keypad3x3) {
+                    Text("POPPED OUT")
+                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color.cyan)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Button(action: {
+                    engine.popOutModuleToWindow(.keypad3x3)
+                }) {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(engine.currentTheme.accentPrimary)
+                        .padding(3)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                }
+                .buttonStyle(.plain)
+                .help("Pop Out 3x3 Keypad into Floating Window")
+            }
 
             // 3x3 Grid
             VStack(spacing: 4) {
@@ -12904,21 +16001,77 @@ struct BitchBoyNativeApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About BitchManager...") {
-                    NSApplication.shared.orderFrontStandardAboutPanel(nil)
+                    let creditsText = """
+                    BitchBoy Hardware Controller Manager & Studio Console
+                    Release 2.0 • Created by Taylor Fossen
+
+                    • 49-Pad LED Matrix & Reactive FX Engine
+                    • Pop-out Standalone Floating Modules (⌘W auto re-dock)
+                    • Modular Expansion Bays & Wing Racks
+                    • Custom Sound & Theme Studio (featuring Prism Rainbow 🌈)
+                    • High-Speed MIDI, OSC & CGEvent QWERTY Injection
+                    • Direct LED Velocity Control & Slot Memory Banks
+                    """
+                    let attrString = NSAttributedString(
+                        string: creditsText,
+                        attributes: [
+                            .font: NSFont.systemFont(ofSize: 11),
+                            .foregroundColor: NSColor.secondaryLabelColor
+                        ]
+                    )
+                    var options: [NSApplication.AboutPanelOptionKey: Any] = [
+                        .applicationName: "BitchManager",
+                        .applicationVersion: "2.0.0",
+                        .version: "Version 2.0.0 (4)",
+                        .credits: attrString
+                    ]
+                    if let icon = NSImage(named: "AppIcon") ?? NSImage(named: "BitchBoyBadgeIcon") {
+                        options[.applicationIcon] = icon
+                    }
+                    NSApplication.shared.orderFrontStandardAboutPanel(options: options)
                 }
                 Button("Check for Updates on GitHub...") {
                     engine.checkForUpdates(showModalIfCurrent: true)
                 }
                 Divider()
             }
-            CommandMenu("UI Zoom & Window") {
-                Button(engine.isWindowAlwaysOnTop ? "✓ Keep Window Always On Top" : "Keep Window Always On Top") {
-                    engine.toggleWindowAlwaysOnTop()
+
+            CommandGroup(replacing: .saveItem) {
+                Button("Save Preset Slot to Internal Memory") {
+                    engine.saveCurrentSlot()
+                    engine.log("💾 Preset saved to internal memory.")
                 }
-                .keyboardShortcut("t", modifiers: [.command, .option])
+                .keyboardShortcut("s", modifiers: [.command])
+
+                Button("Clone Current Preset to Next Slot") {
+                    engine.cloneCurrentSlot()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Button("Export Preset JSON to Clipboard") {
+                    _ = engine.exportPresetToJSON()
+                }
+                .keyboardShortcut("e", modifiers: [.command])
+
+                Button("Import Preset JSON from Clipboard") {
+                    engine.importPresetFromClipboard()
+                }
+                .keyboardShortcut("i", modifiers: [.command])
 
                 Divider()
 
+                Button("🚨 Panic Blackout (Kill All LEDs)") {
+                    engine.blackoutPanic()
+                }
+                .keyboardShortcut("k", modifiers: [.command])
+
+                Button("Rescan BitchBoy Hardware") {
+                    engine.scanForBitchBoy()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .toolbar) {
                 Button("Zoom In (+10%)") {
                     engine.zoomInUI()
                 }
@@ -12933,6 +16086,225 @@ struct BitchBoyNativeApp: App {
                     engine.enableAutoFitWindow()
                 }
                 .keyboardShortcut("0", modifiers: [.command])
+
+                Menu("Fixed Scale Presets") {
+                    Button("Scale 50%") { engine.setManualZoom(0.50) }
+                    Button("Scale 75%") { engine.setManualZoom(0.75) }
+                    Button("Scale 100% (Native)") { engine.setManualZoom(1.00) }
+                    Button("Scale 125%") { engine.setManualZoom(1.25) }
+                    Button("Scale 150%") { engine.setManualZoom(1.50) }
+                    Button("Scale 200%") { engine.setManualZoom(2.00) }
+                }
+
+                Divider()
+
+                Button(engine.isRearrangingModules ? "✓ Exit Rearrange Mode (Lock Layout)" : "Rearrange & Dynamic Layout Mode") {
+                    engine.toggleRearrangeModulesMode()
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+
+                Button("Reset Module Positions to Defaults") {
+                    engine.resetModuleLayout()
+                }
+
+                Button("Compact Layout All Modules (210px)") {
+                    for m in StudioModuleID.allCases {
+                        engine.setModuleHeight(m, height: 210, save: false)
+                    }
+                    engine.saveModuleSizes()
+                }
+
+                Button("Standard Layout All Modules (340px)") {
+                    for m in StudioModuleID.allCases {
+                        engine.setModuleHeight(m, height: 340, save: false)
+                    }
+                    engine.saveModuleSizes()
+                }
+
+                Divider()
+
+                Button("✨ Rainbow Refresh Wave") {
+                    engine.runRainbowWaveRefresh()
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+
+                Divider()
+
+                Menu("Chassis Glow Themes") {
+                    ForEach(ChassisTheme.allCases.filter { $0 != .customUser }) { th in
+                        Button(action: {
+                            engine.currentTheme = th
+                            UserDefaults.standard.set(th.rawValue, forKey: "BitchBoy_ChassisTheme_v2")
+                            SoundEffect.presetSwitch.play(with: engine.soundPack)
+                        }) {
+                            HStack {
+                                Text(th.rawValue)
+                                if engine.currentTheme == th {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                    if !engine.customThemes.isEmpty {
+                        Divider()
+                        ForEach(engine.customThemes) { customTh in
+                            Button("★ " + customTh.name) {
+                                engine.applyCustomTheme(customTh)
+                            }
+                        }
+                    }
+                }
+
+                Menu("Audio Feedback Sounds") {
+                    ForEach(SoundPack.allCases) { pack in
+                        Button(action: { engine.setSoundPack(pack) }) {
+                            HStack {
+                                Text(pack.rawValue)
+                                if engine.soundPack == pack {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            CommandMenu("Modules") {
+                Button(engine.spotlightModule == .terminal ? "✓ Dismiss Protocol Terminal" : "Protocol Terminal & Packet Inspector") {
+                    engine.toggleSpotlightModule(.terminal)
+                }
+                .keyboardShortcut("t", modifiers: [.command])
+
+                Button("Pop Out Terminal into Floating Window") {
+                    engine.popOutModuleToWindow(.terminal)
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Spotlight: MIDI Router") { engine.toggleSpotlightModule(.midiRouter) }
+                Button("Spotlight: Memory Slots") { engine.toggleSpotlightModule(.memorySlots) }
+                Button("Spotlight: Custom FX Studio") { engine.toggleSpotlightModule(.customFXStudio) }
+                Button("Spotlight: Reactive Key FX") { engine.toggleSpotlightModule(.reactiveKeyFX) }
+                Button("Spotlight: Show Control (OSC/DMX)") { engine.toggleSpotlightModule(.showControl) }
+
+                Divider()
+
+                Button("Pop Out: MIDI Router Window") { engine.popOutModuleToWindow(.midiRouter) }
+                Button("Pop Out: Memory Slots Window") { engine.popOutModuleToWindow(.memorySlots) }
+                Button("Pop Out: Custom FX Window") { engine.popOutModuleToWindow(.customFXStudio) }
+                Button("Pop Out: Reactive Key FX Window") { engine.popOutModuleToWindow(.reactiveKeyFX) }
+                Button("Pop Out: Show Control Window") { engine.popOutModuleToWindow(.showControl) }
+
+                Divider()
+
+                Button("↙ Dock All Floating Windows Back to Console") {
+                    engine.dockAllModules()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Clear Protocol Terminal Logs") {
+                    engine.clearProtocolLogs()
+                }
+                .keyboardShortcut("l", modifiers: [.command])
+
+                Button("Copy Protocol Logs to Clipboard") {
+                    engine.exportProtocolLogsToClipboard()
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+
+                Button("Inject Mock Test Protocol Packets") {
+                    engine.injectTestProtocolPacket()
+                }
+            }
+
+            CommandMenu("Presets") {
+                Button("Slot A (Bank 1)") { engine.selectSlot(0) }
+                    .keyboardShortcut("1", modifiers: [.command])
+                Button("Slot B (Bank 1)") { engine.selectSlot(1) }
+                    .keyboardShortcut("2", modifiers: [.command])
+                Button("Slot C (Bank 1)") { engine.selectSlot(2) }
+                    .keyboardShortcut("3", modifiers: [.command])
+                Button("Slot D (Bank 1)") { engine.selectSlot(3) }
+                    .keyboardShortcut("4", modifiers: [.command])
+                Button("Slot E (Bank 2)") { engine.selectSlot(4) }
+                    .keyboardShortcut("5", modifiers: [.command])
+                Button("Slot F (Bank 2)") { engine.selectSlot(5) }
+                    .keyboardShortcut("6", modifiers: [.command])
+                Button("Slot G (Bank 2)") { engine.selectSlot(6) }
+                    .keyboardShortcut("7", modifiers: [.command])
+                Button("Slot H (Bank 2)") { engine.selectSlot(7) }
+                    .keyboardShortcut("8", modifiers: [.command])
+
+                Divider()
+
+                Button("Next Preset Slot") {
+                    let next = (engine.activeSlot + 1) % engine.slots.count
+                    engine.selectSlot(next)
+                }
+                .keyboardShortcut("]", modifiers: [.command])
+
+                Button("Previous Preset Slot") {
+                    let prev = (engine.activeSlot - 1 + engine.slots.count) % engine.slots.count
+                    engine.selectSlot(prev)
+                }
+                .keyboardShortcut("[", modifiers: [.command])
+            }
+
+            CommandMenu("Lighting & FX") {
+                ForEach(LEDFXMode.allCases) { mode in
+                    Button(action: { engine.applyFXMode(mode) }) {
+                        HStack {
+                            Text(mode.rawValue)
+                            if engine.currentFXMode == mode && !engine.isPlayingCustomFX {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+
+                if !engine.customEffects.isEmpty {
+                    Divider()
+                    Menu("Custom Light Shows") {
+                        ForEach(engine.customEffects) { cfx in
+                            Button("★ " + cfx.name) {
+                                engine.playCustomEffect(cfx)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("⏹ Stop FX & Restore Preset LEDs") {
+                    engine.stopCustomEffect()
+                    engine.applyFXMode(.staticFX)
+                }
+                .keyboardShortcut(".", modifiers: [.command])
+            }
+
+            CommandGroup(after: .windowArrangement) {
+                Divider()
+
+                Button(engine.isWindowAlwaysOnTop ? "✓ Keep Window Always On Top" : "Keep Window Always On Top") {
+                    engine.toggleWindowAlwaysOnTop()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+
+                Button("Auto-Fit Window Scale") {
+                    engine.enableAutoFitWindow()
+                }
+                .keyboardShortcut("0", modifiers: [.command])
+
+                Button("↙ Dock All Popped-Out Modules") {
+                    engine.dockAllModules()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
             }
         }
         MenuBarExtra {
@@ -12944,14 +16316,32 @@ struct BitchBoyNativeApp: App {
                 }
                 Divider()
             }
+            Button(engine.spotlightModule == .terminal ? "Hide Terminal" : "Show Terminal Protocol Monitor") {
+                engine.toggleSpotlightModule(.terminal)
+            }
+            Button("Pop Out Terminal Window") {
+                engine.popOutModuleToWindow(.terminal)
+            }
+            Divider()
             Button(engine.isWindowAlwaysOnTop ? "📌 Unpin Always On Top" : "📌 Pin Window Always On Top") {
                 engine.toggleWindowAlwaysOnTop()
             }
             Button("✨ Trigger Rainbow Refresh") { engine.runRainbowWaveRefresh() }
             Button("🚨 Panic Blackout") { engine.blackoutPanic() }
             Divider()
-            ForEach(0..<4, id: \.self) { idx in
-                Button("Load \(engine.slots[idx].name)") { engine.selectSlot(idx) }
+            Menu("Load Preset Slot") {
+                ForEach(0..<engine.slots.count, id: \.self) { idx in
+                    Button("Load \(engine.slots[idx].name)") { engine.selectSlot(idx) }
+                }
+            }
+            Menu("Cyber Themes") {
+                ForEach(ChassisTheme.allCases.filter { $0 != .customUser }) { th in
+                    Button(th.rawValue) {
+                        engine.currentTheme = th
+                        UserDefaults.standard.set(th.rawValue, forKey: "BitchBoy_ChassisTheme_v2")
+                        SoundEffect.presetSwitch.play(with: engine.soundPack)
+                    }
+                }
             }
             Divider()
             Button("Check for Updates on GitHub...") {
