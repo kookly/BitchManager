@@ -1424,7 +1424,7 @@ struct ReactivePulseEvent: Identifiable {
     let mode: ReactiveKeyFXMode
     let baseVelocity: UInt8
     var age: Double = 0.0 // 0.0 -> 1.0+
-    var lightningTargets: [Int] = []
+    var lightningTargets: Set<Int> = []
 }
 
 struct PresetSlot: Codable, Identifiable {
@@ -1596,9 +1596,10 @@ final class BitchBoyEngine: ObservableObject {
     @Published var reactiveFXSpeed: Double = 1.4
     @Published var reactiveFXColorVelocity: UInt8 = 78 // 0 = Rainbow Dynamic, >0 = Specific Neon Color
     @Published var reactiveFXRainbowColor: Bool = true
-    @Published var activeReactivePulses: [ReactivePulseEvent] = []
-    @Published var lastReactiveOriginKey: Int = -1
-    private var reactiveFXTimer: AnyCancellable?
+    @Published var reactiveWaveCount: Int = 0
+    private(set) var activeReactivePulses: [ReactivePulseEvent] = []
+    private var lastReactiveOriginKey: Int = -1
+    private var reactiveFXTimer: DispatchSourceTimer?
     private var lastSentReactiveLEDs: [UInt8] = Array(repeating: 255, count: 49)
 
     // --- UI SCALING / ZOOM & CUSTOM APP ICON STATE ---
@@ -2480,7 +2481,7 @@ final class BitchBoyEngine: ObservableObject {
             currentFXMode = .staticFX
             fxTimer?.cancel()
             fxTimer = nil
-            activeReactivePulses.removeAll()
+            clearReactiveKeyFX()
             log("🛑 MSC Auto-Trigger: STOP / PANIC Blackout")
         case .load:
             if let cueInt = Int(cueNumber), cueInt >= 1, cueInt <= slots.count {
@@ -3112,11 +3113,11 @@ final class BitchBoyEngine: ObservableObject {
             ? palette[(keyIndex * 3 + activeReactivePulses.count * 2) % palette.count]
             : reactiveFXColorVelocity
 
-        var targets: [Int] = []
+        var targets = Set<Int>()
         if reactiveKeyFXMode == .arcLightning {
             var pool = Array(0..<49).filter { $0 != keyIndex }
             pool.shuffle()
-            targets = Array(pool.prefix(8))
+            targets = Set(pool.prefix(8))
         }
 
         let pulse = ReactivePulseEvent(
@@ -3129,20 +3130,32 @@ final class BitchBoyEngine: ObservableObject {
             lightningTargets: targets
         )
         activeReactivePulses.append(pulse)
-        if activeReactivePulses.count > 12 {
-            activeReactivePulses.removeFirst(activeReactivePulses.count - 12)
+        if activeReactivePulses.count > 4 {
+            activeReactivePulses.removeFirst(activeReactivePulses.count - 4)
         }
 
-        if reactiveFXTimer == nil {
-            lastSentReactiveLEDs = Array(repeating: 255, count: 49)
-            // Ultra-smooth 40 FPS timer
-            reactiveFXTimer = Timer.publish(every: 0.025, on: .main, in: .common)
-                .autoconnect()
-                .sink { [weak self] _ in
-                    self?.stepReactiveKeyFX()
-                }
+        if reactiveWaveCount != activeReactivePulses.count {
+            reactiveWaveCount = activeReactivePulses.count
         }
-        stepReactiveKeyFX()
+
+        startReactiveTimerIfNeeded()
+    }
+
+    private func startReactiveTimerIfNeeded() {
+        guard reactiveFXTimer == nil else { return }
+        lastSentReactiveLEDs = Array(repeating: 255, count: 49)
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        timer.schedule(deadline: .now() + .milliseconds(33), repeating: .milliseconds(33), leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in
+            self?.stepReactiveKeyFX()
+        }
+        reactiveFXTimer = timer
+        timer.resume()
+    }
+
+    private func stopReactiveTimer() {
+        reactiveFXTimer?.cancel()
+        reactiveFXTimer = nil
     }
 
     func triggerRandomDemoReactiveFX() {
@@ -3156,17 +3169,29 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     private func stepReactiveKeyFX() {
-        let dt = 0.025 * max(0.3, reactiveFXSpeed)
+        guard !activeReactivePulses.isEmpty else {
+            stopReactiveTimer()
+            if reactiveWaveCount != 0 {
+                reactiveWaveCount = 0
+            }
+            return
+        }
+
+        let dt = 0.033 * max(0.3, reactiveFXSpeed)
         for i in activeReactivePulses.indices {
             activeReactivePulses[i].age += dt
         }
         activeReactivePulses.removeAll { $0.age > 1.05 }
 
+        if reactiveWaveCount != activeReactivePulses.count {
+            reactiveWaveCount = activeReactivePulses.count
+        }
+
         let palette: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
 
         var batch = controls
-        var didChange = false
-        var batchNotes: [(note: UInt8, velocity: UInt8)] = []
+        var didChangeUI = false
+        var hardwareNotes: [(keyIndex: Int, note: UInt8, velocity: UInt8, delta: Int)] = []
 
         for k in 0..<49 {
             let baseVel: UInt8
@@ -3185,7 +3210,6 @@ final class BitchBoyEngine: ObservableObject {
             let kr = Double(kPos.row)
 
             for pulse in activeReactivePulses {
-                // Zero-cost precomputed distance lookup matrix
                 let dist = BitchBoyKeyMap.keyDistances[k][pulse.originKeyIndex]
                 let dx = kc - pulse.originCol
                 let dy = kr - pulse.originRow
@@ -3254,26 +3278,49 @@ final class BitchBoyEngine: ObservableObject {
             let finalVel: UInt8 = maxIntensity > 0.14 ? effectVel : baseVel
             if batch[k].currentLED != finalVel {
                 batch[k].currentLED = finalVel
-                didChange = true
+                didChangeUI = true
             }
-            if lastSentReactiveLEDs[k] != finalVel {
-                lastSentReactiveLEDs[k] = finalVel
-                batchNotes.append((note: batch[k].number, velocity: finalVel))
+
+            let lastSent = lastSentReactiveLEDs[k]
+            let delta = abs(Int(lastSent) - Int(finalVel))
+            let isSignificant = delta >= 3 || (finalVel == 0 && lastSent != 0) || (lastSent == 0 && finalVel != 0)
+            if isSignificant {
+                hardwareNotes.append((keyIndex: k, note: batch[k].number, velocity: finalVel, delta: delta))
             }
         }
 
-        if didChange {
+        if didChangeUI {
             controls = batch
         }
 
-        // Send all changed LEDs in a single batch MIDI packet list
-        if !batchNotes.isEmpty {
-            sendBatchNoteOn(notesAndVelocities: batchNotes)
+        if !hardwareNotes.isEmpty && isConnected && bitchBoyDestination != 0 {
+            if hardwareNotes.count > 16 {
+                hardwareNotes.sort { $0.delta > $1.delta }
+                hardwareNotes = Array(hardwareNotes.prefix(16))
+            }
+            for item in hardwareNotes {
+                lastSentReactiveLEDs[item.keyIndex] = item.velocity
+            }
+            let sendItems = hardwareNotes.map { (note: $0.note, velocity: $0.velocity) }
+            sendBatchNoteOn(notesAndVelocities: sendItems)
         }
 
         if activeReactivePulses.isEmpty {
-            reactiveFXTimer?.cancel()
-            reactiveFXTimer = nil
+            stopReactiveTimer()
+            if reactiveWaveCount != 0 {
+                reactiveWaveCount = 0
+            }
+            var restoreNotes: [(note: UInt8, velocity: UInt8)] = []
+            for k in 0..<49 {
+                let v = controls[k].currentLED
+                if lastSentReactiveLEDs[k] != v {
+                    lastSentReactiveLEDs[k] = v
+                    restoreNotes.append((note: controls[k].number, velocity: v))
+                }
+            }
+            if !restoreNotes.isEmpty {
+                sendBatchNoteOn(notesAndVelocities: restoreNotes)
+            }
         }
     }
 
@@ -3362,11 +3409,21 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func restorePresetLEDs() {
+        var batchNotes: [(note: UInt8, velocity: UInt8)] = []
         for i in 0..<49 {
             let vel = controls[i].idleVelocity
             controls[i].currentLED = vel
-            sendNoteOn(note: controls[i].number, velocity: vel)
+            batchNotes.append((note: controls[i].number, velocity: vel))
         }
+        sendBatchNoteOn(notesAndVelocities: batchNotes)
+    }
+
+    func clearReactiveKeyFX() {
+        activeReactivePulses.removeAll()
+        reactiveWaveCount = 0
+        stopReactiveTimer()
+        lastSentReactiveLEDs = Array(repeating: 255, count: 49)
+        restorePresetLEDs()
     }
 
     // 1. Authentic Rainbow Wave Refresh Sweep (sweeps 11 columns and restores presets)
@@ -5688,10 +5745,14 @@ final class BitchBoyEngine: ObservableObject {
         log("⚡️ Applied Velocity \(velocity) to Range [\(range.lowerBound)..\(range.upperBound - 1)]")
     }
 
+    private static let logDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
     func log(_ msg: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let ts = formatter.string(from: Date())
+        let ts = Self.logDateFormatter.string(from: Date())
         midiLogs.insert("[\(ts)] \(msg)", at: 0)
         if midiLogs.count > 40 { midiLogs.removeLast() }
     }
@@ -11625,8 +11686,7 @@ struct ContentView: View {
                         engine.reactiveKeyFXMode = .ripple
                     } else {
                         engine.reactiveKeyFXMode = .off
-                        engine.activeReactivePulses.removeAll()
-                        engine.restorePresetLEDs()
+                        engine.clearReactiveKeyFX()
                     }
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
@@ -11782,9 +11842,9 @@ struct ContentView: View {
                         }
                         .buttonStyle(.plain)
 
-                        Text(engine.activeReactivePulses.isEmpty ? "PRESS ANY KEY" : "⚡ \(engine.activeReactivePulses.count) WAVES")
+                        Text(engine.reactiveWaveCount == 0 ? "PRESS ANY KEY" : "⚡ \(engine.reactiveWaveCount) WAVES")
                             .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
-                            .foregroundColor(engine.activeReactivePulses.isEmpty ? Color(white: 0.55) : Color.yellow)
+                            .foregroundColor(engine.reactiveWaveCount == 0 ? Color(white: 0.55) : Color.yellow)
                             .padding(.horizontal, 6 * scale)
                             .padding(.vertical, 5 * scale)
                             .background(Color.black.opacity(0.5))
