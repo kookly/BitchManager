@@ -8844,7 +8844,7 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "point.3.filled.connected.trianglepath.dotted")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("MIDI ROUTER")
@@ -8853,25 +8853,17 @@ struct ContentView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
 
-                        Spacer(minLength: 2)
-
-                        HStack(spacing: 3) {
-                            Circle()
-                                .fill(engine.midiThruEnabled ? Color.green : Color.orange)
-                                .frame(width: 5, height: 5)
-                            Text(engine.midiThruEnabled ? "THRU ON" : "MUTED")
-                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                .foregroundColor(engine.midiThruEnabled ? Color.green : Color.orange)
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        Circle()
+                            .fill(engine.midiThruEnabled ? Color.green : Color.orange)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: engine.midiThruEnabled ? Color.green : Color.orange, radius: 2)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.midiRouter)
                     }
+
+                    Spacer(minLength: 2)
 
                     moduleHeaderControls(for: .midiRouter)
                 }
@@ -9433,7 +9425,7 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("SHOW CONTROL")
@@ -9442,25 +9434,17 @@ struct ContentView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
 
-                        Spacer(minLength: 2)
-
-                        HStack(spacing: 3) {
-                            Circle()
-                                .fill(Color.green)
-                                .frame(width: 5, height: 5)
-                            Text("LIVE")
-                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                .foregroundColor(Color.green)
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: Color.green, radius: 2)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.showControl)
                     }
+
+                    Spacer(minLength: 2)
 
                     moduleHeaderControls(for: .showControl)
                 }
@@ -10988,7 +10972,7 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "wand.and.stars")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
 
                         Text("CUSTOM FX")
@@ -10997,25 +10981,17 @@ struct ContentView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
 
-                        Spacer(minLength: 2)
-
-                        if engine.isPlayingCustomFX {
-                            HStack(spacing: 3) {
-                                Circle().fill(Color.green).frame(width: 5, height: 5)
-                                Text("LIVE")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                    .foregroundColor(.green)
-                            }
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.18))
-                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
-                        }
+                        Circle()
+                            .fill(engine.isPlayingCustomFX ? Color.green : Color(white: 0.4))
+                            .frame(width: 5, height: 5)
+                            .shadow(color: engine.isPlayingCustomFX ? Color.green : .clear, radius: 2)
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         engine.toggleSpotlightModule(.customFXStudio)
                     }
+
+                    Spacer(minLength: 2)
 
                     moduleHeaderControls(for: .customFXStudio)
                 }
