@@ -5,6 +5,15 @@ import Network
 import Combine
 import UniformTypeIdentifiers
 import Darwin
+import Accessibility
+
+func postVoiceOverAnnouncement(_ message: String) {
+    if #available(macOS 14.0, *) {
+        AccessibilityNotification.Announcement(message).post()
+    } else if let window = NSApp.keyWindow {
+        NSAccessibility.post(element: window, notification: .announcementRequested, userInfo: [.announcement: message])
+    }
+}
 
 // ============================================================================
 // 1. DATA MODELS & EXACT 69-CONTROL HARDWARE SPECIFICATION
@@ -112,6 +121,53 @@ struct BitchBoyKeyMap {
         }
         return matrix
     }()
+
+    // Precomputed note-to-control index lookup table (Notes 0..127) for O(1) instantaneous lookup
+    static let noteToIndex: [Int] = {
+        var table = Array(repeating: -1, count: 128)
+        let gridNotes: [[UInt8]] = [
+            [64, 65, 66, 67, 96, 97, 98, 99],
+            [60, 61, 62, 63, 92, 93, 94, 95],
+            [56, 57, 58, 59, 88, 89, 90, 91],
+            [52, 53, 54, 55, 84, 85, 86, 87]
+        ]
+        var idx = 0
+        for r in 0..<4 {
+            for c in 0..<8 {
+                table[Int(gridNotes[r][c])] = idx
+                idx += 1
+            }
+        }
+        let stripNotes: [UInt8] = [48, 49, 50, 51, 80, 81, 82, 83]
+        for n in stripNotes {
+            table[Int(n)] = idx
+            idx += 1
+        }
+        let padNotes: [UInt8] = [44, 45, 46, 40, 41, 42, 36, 37, 38]
+        for n in padNotes {
+            table[Int(n)] = idx
+            idx += 1
+        }
+        return table
+    }()
+
+    // Precomputed CC-to-control index lookup table (CCs 0..127) for O(1) instantaneous lookup
+    static let ccToIndex: [Int] = {
+        var table = Array(repeating: -1, count: 128)
+        // 49..56: 8 Vertical Faders (CC 0..7)
+        for i in 0..<8 {
+            table[i] = 49 + i
+        }
+        // 57..60: 4 Horizontal Faders (CC 8..11)
+        for i in 0..<4 {
+            table[8 + i] = 57 + i
+        }
+        // 61..68: 8 Rotary Knobs (CC 20..27)
+        for i in 0..<8 {
+            table[20 + i] = 61 + i
+        }
+        return table
+    }()
 }
 
 enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
@@ -128,6 +184,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
     case horizontalFaders = "4 HORIZONTAL FADERS // CC 8-11"
     case rotaryKnobs = "2X4 ROTARY KNOBS // CC 20-27"
     case colorPickerHUD = "COLOR PICKER // LED HUD"
+    case hardwareMIDIFilter = "HARDWARE MIDI & MUTE // I/O"
 
     var id: String { rawValue }
 
@@ -158,6 +215,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .horizontalFaders: return "H-FADERS"
         case .rotaryKnobs: return "KNOBS"
         case .colorPickerHUD: return "COLOR PICKER"
+        case .hardwareMIDIFilter: return "HW MIDI"
         }
     }
 
@@ -176,6 +234,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .horizontalFaders: return "slider.horizontal.below.rectangle"
         case .rotaryKnobs: return "dial.low.fill"
         case .colorPickerHUD: return "paintpalette.fill"
+        case .hardwareMIDIFilter: return "switch.2"
         }
     }
 
@@ -195,6 +254,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .horizontalFaders: return NSSize(width: 340, height: 220)
         case .rotaryKnobs: return NSSize(width: 280, height: 360)
         case .colorPickerHUD: return NSSize(width: 360, height: 400)
+        case .hardwareMIDIFilter: return NSSize(width: 380, height: 530)
         }
     }
 
@@ -213,6 +273,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .horizontalFaders: return NSSize(width: 260, height: 160)
         case .rotaryKnobs: return NSSize(width: 210, height: 280)
         case .colorPickerHUD: return NSSize(width: 280, height: 300)
+        case .hardwareMIDIFilter: return NSSize(width: 320, height: 430)
         }
     }
 
@@ -231,6 +292,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
         case .horizontalFaders: return 180
         case .rotaryKnobs: return 320
         case .colorPickerHUD: return 350
+        case .hardwareMIDIFilter: return 460
         }
     }
 
@@ -244,7 +306,7 @@ enum StudioModuleID: String, CaseIterable, Codable, Identifiable {
     }
 
     static var expansionModules: [StudioModuleID] {
-        return [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal]
+        return [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal, .hardwareMIDIFilter]
     }
 
     static var hardwareModules: [StudioModuleID] {
@@ -295,7 +357,9 @@ func getLocalNetworkInterfaces() -> [NetworkInterfaceInfo] {
             let name = String(cString: ptr.pointee.ifa_name)
             var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             if getnameinfo(ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
-                let ip = String(cString: hostname)
+                let ip = hostname.withUnsafeBufferPointer { ptr in
+                    ptr.baseAddress.map { String(cString: $0) } ?? ""
+                }
                 let isLo = (flags & IFF_LOOPBACK) != 0 || ip == "127.0.0.1"
                 let friendlyName: String
                 if name.hasPrefix("en0") {
@@ -439,24 +503,36 @@ final class CustomSoundBank {
         }
     }
 
+    private var customSoundCache: [String: NSSound] = [:]
+
     func clearCustomSound(for effect: SoundEffect) {
+        if let p = soundPaths[effect.rawValue] {
+            customSoundCache.removeValue(forKey: p)
+        }
         soundPaths.removeValue(forKey: effect.rawValue)
         UserDefaults.standard.set(soundPaths, forKey: storageKey)
     }
 
     func clearAllCustomSounds() {
+        customSoundCache.removeAll()
         soundPaths.removeAll()
         UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
     func playCustomIfAvailable(for effect: SoundEffect) -> Bool {
-        guard let p = path(for: effect),
-              let snd = NSSound(contentsOfFile: p, byReference: true) else {
+        guard let p = path(for: effect) else {
             return false
         }
-        snd.stop()
-        snd.play()
-        return true
+        if let snd = customSoundCache[p] {
+            snd.stop()
+            snd.play()
+            return true
+        } else if let snd = NSSound(contentsOfFile: p, byReference: true) {
+            customSoundCache[p] = snd
+            snd.play()
+            return true
+        }
+        return false
     }
 }
 
@@ -798,7 +874,7 @@ enum ChassisTheme: String, CaseIterable, Identifiable {
 struct BitchBoyHardwareColor {
     // Exact mapping specified for BitchBoy hardware:
     // Red 72 (48 Hex), Green 87, Blue 41, Yellow 74, Cyan 78, Orange 61,
-    // Purple 67, Brown 83, Off 0, White 3, Pink 95, Amber 96, Turqoise 33
+    // Purple 67, Brown 83, Off 0, White 3, Pink 57, Amber 96, Turqoise 33
     static let off       = Color(white: 0.14)
     static let white     = Color(red: 0.98, green: 0.98, blue: 1.00)
     static let turquoise = Color(red: 0.16, green: 0.90, blue: 0.78)
@@ -833,11 +909,11 @@ struct BitchBoyHardwareColor {
         Item(name: "CYAN", shortName: "CYN", velocity: 78, color: cyan),
         Item(name: "BROWN", shortName: "BRN", velocity: 83, color: brown),
         Item(name: "GREEN", shortName: "GRN", velocity: 87, color: green),
-        Item(name: "PINK", shortName: "PNK", velocity: 95, color: pink),
+        Item(name: "PINK", shortName: "PNK", velocity: 57, color: pink),
         Item(name: "AMBER", shortName: "AMB", velocity: 96, color: amber)
     ]
 
-    static let knownVelocities: [UInt8] = [0, 3, 33, 41, 61, 67, 72, 74, 78, 83, 87, 95, 96]
+    static let knownVelocities: [UInt8] = [0, 3, 33, 41, 57, 61, 67, 72, 74, 78, 83, 87, 96]
 
     static func closestHardwareVelocity(for vel: UInt8) -> UInt8 {
         if vel == 0 { return 0 }
@@ -857,7 +933,7 @@ struct BitchBoyHardwareColor {
         case 78: return cyan
         case 83: return brown
         case 87: return green
-        case 95: return pink
+        case 57, 95: return pink
         case 96: return amber
         default:
             let nearest = knownVelocities.min(by: { abs(Int($0) - Int(vel)) < abs(Int($1) - Int(vel)) }) ?? 0
@@ -878,7 +954,7 @@ struct BitchBoyHardwareColor {
         case 78: return "CYAN"
         case 83: return "BROWN"
         case 87: return "GREEN"
-        case 95: return "PINK"
+        case 57, 95: return "PINK"
         case 96: return "AMBER"
         default:
             let nearest = knownVelocities.min(by: { abs(Int($0) - Int(vel)) < abs(Int($1) - Int(vel)) }) ?? 0
@@ -915,7 +991,7 @@ struct GitHubReleaseInfo: Codable, Identifiable, Equatable {
     var tagName: String
     var name: String?
     var body: String?
-    var htmlUrl: String
+    var htmlURL: String
     var publishedAt: String?
     var assets: [GitHubReleaseAsset]
 
@@ -924,7 +1000,7 @@ struct GitHubReleaseInfo: Codable, Identifiable, Equatable {
         case tagName = "tag_name"
         case name
         case body
-        case htmlUrl = "html_url"
+        case htmlURL = "html_url"
         case publishedAt = "published_at"
         case assets
     }
@@ -959,14 +1035,14 @@ struct GitHubReleaseInfo: Codable, Identifiable, Equatable {
 struct GitHubReleaseAsset: Codable, Identifiable, Equatable {
     var id: Int
     var name: String
-    var browserDownloadUrl: String
+    var browserDownloadURL: String
     var size: Int
     var contentType: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case name
-        case browserDownloadUrl = "browser_download_url"
+        case browserDownloadURL = "browser_download_url"
         case size
         case contentType = "content_type"
     }
@@ -982,7 +1058,7 @@ struct GitHubReleaseAsset: Codable, Identifiable, Equatable {
     }
 }
 
-struct QwertyStep: Codable, Identifiable {
+struct QwertyStep: Codable, Identifiable, Equatable {
     var id = UUID()
     var key: String
     var cmd: Bool = false
@@ -990,6 +1066,272 @@ struct QwertyStep: Codable, Identifiable {
     var alt: Bool = false
     var ctrl: Bool = false
     var delayMs: Int = 10
+}
+
+// ============================================================================
+// HARDWARE ARCHITECTURE SECTIONS & CONTROLS
+// ============================================================================
+
+enum HardwareSection: String, CaseIterable, Identifiable {
+    case grid8x4 = "GRID"
+    case strip1x8 = "STRIP"
+    case keypad3x3 = "PAD"
+    case verticalFaders = "VFADERS"
+    case horizontalFaders = "HFADERS"
+    case rotaryKnobs = "MASTER_KNOBS"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .grid8x4: return "8X4 KEY GRID (32 KEYS)"
+        case .strip1x8: return "1X8 KEY STRIP (8 KEYS)"
+        case .keypad3x3: return "3X3 KEYPAD (9 KEYS)"
+        case .verticalFaders: return "8 VERTICAL FADERS (CC 0-7)"
+        case .horizontalFaders: return "4 HORIZONTAL FADERS (CC 8-11)"
+        case .rotaryKnobs: return "2X4 ROTARY KNOBS (CC 20-27)"
+        }
+    }
+
+    var indexRange: Range<Int> {
+        switch self {
+        case .grid8x4: return 0..<32
+        case .strip1x8: return 32..<40
+        case .keypad3x3: return 40..<49
+        case .verticalFaders: return 49..<57
+        case .horizontalFaders: return 57..<61
+        case .rotaryKnobs: return 61..<69
+        }
+    }
+
+    static func section(for index: Int) -> HardwareSection? {
+        allCases.first { $0.indexRange.contains(index) }
+    }
+}
+
+// ============================================================================
+// SHOW CONTROL PROTOCOL ENGINES: MSC, OSC, ART-NET 4 & sACN E1.31
+// ============================================================================
+
+enum OSCArgumentType: String, CaseIterable, Codable, Identifiable {
+    case none = "NONE"
+    case float = "FLOAT"
+    case int = "INT"
+    case string = "STRING"
+    case boolean = "BOOLEAN"
+    case booleanTrue = "BOOLEAN_TRUE"
+    case booleanFalse = "BOOLEAN_FALSE"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none: return "BANG / NONE"
+        case .float: return "FLOAT"
+        case .int: return "INT"
+        case .string: return "STRING"
+        case .boolean: return "BOOL"
+        case .booleanTrue: return "BOOL (TRUE)"
+        case .booleanFalse: return "BOOL (FALSE)"
+        }
+    }
+}
+
+enum MSCCommand: UInt8, CaseIterable, Identifiable, Codable {
+    case go = 0x01
+    case stop = 0x02
+    case resume = 0x03
+    case timedGo = 0x04
+    case load = 0x05
+    case set = 0x06
+    case fire = 0x07
+    case allOff = 0x08
+    case restore = 0x09
+    case reset = 0x0A
+    case goOff = 0x0B
+    case goJam = 0x11
+    case standbyPlus = 0x12
+    case standbyMinus = 0x13
+
+    var id: UInt8 { rawValue }
+
+    var title: String {
+        switch self {
+        case .go: return "GO"
+        case .stop: return "STOP"
+        case .resume: return "RESUME"
+        case .timedGo: return "TIMED GO"
+        case .load: return "LOAD"
+        case .set: return "SET"
+        case .fire: return "FIRE MACRO"
+        case .allOff: return "ALL OFF / PANIC"
+        case .restore: return "RESTORE"
+        case .reset: return "RESET"
+        case .goOff: return "GO OFF"
+        case .goJam: return "GO JAM"
+        case .standbyPlus: return "STANDBY +"
+        case .standbyMinus: return "STANDBY -"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .go: return "play.fill"
+        case .stop: return "stop.fill"
+        case .resume: return "playpause.fill"
+        case .timedGo: return "timer"
+        case .load: return "arrow.down.doc.fill"
+        case .set: return "slider.horizontal.3"
+        case .fire: return "flame.fill"
+        case .allOff: return "exclamationmark.octagon.fill"
+        case .restore: return "arrow.uturn.backward"
+        case .reset: return "arrow.clockwise"
+        case .goOff: return "xmark.circle"
+        case .goJam: return "bolt.horizontal.fill"
+        case .standbyPlus: return "plus.circle.fill"
+        case .standbyMinus: return "minus.circle.fill"
+        }
+    }
+}
+
+enum MSCCommandFormat: UInt8, CaseIterable, Identifiable, Codable {
+    case lightingGeneral = 0x01
+    case movingLights = 0x02
+    case colorChangers = 0x03
+    case soundGeneral = 0x10
+    case soundPlayback = 0x11
+    case soundEffects = 0x12
+    case machinery = 0x20
+    case videoGeneral = 0x30
+    case projection = 0x40
+    case processControl = 0x50
+    case pyro = 0x60
+    case allTypes = 0x7F
+
+    var id: UInt8 { rawValue }
+
+    var label: String {
+        switch self {
+        case .lightingGeneral: return "Lighting (General)"
+        case .movingLights: return "Moving Lights"
+        case .colorChangers: return "Color Changers"
+        case .soundGeneral: return "Sound (General)"
+        case .soundPlayback: return "Sound Playback"
+        case .soundEffects: return "Sound FX"
+        case .machinery: return "Machinery"
+        case .videoGeneral: return "Video (General)"
+        case .projection: return "Projection"
+        case .processControl: return "Process Control"
+        case .pyro: return "Pyrotechnics"
+        case .allTypes: return "All Types (Universal Broadcast)"
+        }
+    }
+}
+
+protocol DMXPacketBuilder {
+    static func buildDMXPacket(universe: UInt16, channels: [UInt8], sequence: UInt8) -> Data
+}
+
+struct ControlClipboardData: Codable, Equatable {
+    var customName: String = ""
+    var idleVelocity: UInt8 = 0
+    var activeVelocity: UInt8 = 3
+    var feedbackMode: FeedbackMode = .momentary
+    var feedbackCustomVelocity: UInt8 = 78
+    var feedbackInvert: Bool = false
+    var actionType: ActionType = .passthrough
+    var qwertySteps: [QwertyStep] = []
+    var oscHost: String = "127.0.0.1"
+    var oscPort: UInt16 = 8000
+    var oscAddress: String = "/bitchboy/trigger"
+    var oscArgType: String = "NONE"
+    var oscArgValue: String = "1.0"
+    var mscCommand: UInt8 = 1
+    var mscCueNumber: String = ""
+    var appleScript: String = ""
+    var oscEnabled: Bool = false
+    var oscMinVal: Double = 0.0
+    var oscMaxVal: Double = 1.0
+    var oscSendRelease: Bool = false
+    var oscReleaseVal: String = "0.0"
+
+    var typedMSCCommand: MSCCommand {
+        get { MSCCommand(rawValue: mscCommand) ?? .go }
+        set { mscCommand = newValue.rawValue }
+    }
+    var typedOSCArgType: OSCArgumentType {
+        get { OSCArgumentType(rawValue: oscArgType) ?? .none }
+        set { oscArgType = newValue.rawValue }
+    }
+
+    init(from item: ControlItem) {
+        self.customName = item.customName
+        self.idleVelocity = item.idleVelocity
+        self.activeVelocity = item.activeVelocity
+        self.feedbackMode = item.feedbackMode
+        self.feedbackCustomVelocity = item.feedbackCustomVelocity
+        self.feedbackInvert = item.feedbackInvert
+        self.actionType = item.actionType
+        self.qwertySteps = item.qwertySteps
+        self.oscHost = item.oscHost
+        self.oscPort = item.oscPort
+        self.oscAddress = item.oscAddress
+        self.oscArgType = item.oscArgType
+        self.oscArgValue = item.oscArgValue
+        self.mscCommand = item.mscCommand
+        self.mscCueNumber = item.mscCueNumber
+        self.appleScript = item.appleScript
+        self.oscEnabled = item.oscEnabled
+        self.oscMinVal = item.oscMinVal
+        self.oscMaxVal = item.oscMaxVal
+        self.oscSendRelease = item.oscSendRelease
+        self.oscReleaseVal = item.oscReleaseVal
+    }
+
+    func apply(to item: inout ControlItem, copyName: Bool = false) {
+        if copyName && !customName.isEmpty {
+            item.customName = customName
+        }
+        item.idleVelocity = idleVelocity
+        item.activeVelocity = activeVelocity
+        item.feedbackMode = feedbackMode
+        item.feedbackCustomVelocity = feedbackCustomVelocity
+        item.feedbackInvert = feedbackInvert
+        item.actionType = actionType
+        item.qwertySteps = qwertySteps
+        item.oscHost = oscHost
+        item.oscPort = oscPort
+        item.oscAddress = oscAddress
+        item.oscArgType = oscArgType
+        item.oscArgValue = oscArgValue
+        item.mscCommand = mscCommand
+        item.mscCueNumber = mscCueNumber
+        item.appleScript = appleScript
+        item.oscEnabled = oscEnabled
+        item.oscMinVal = oscMinVal
+        item.oscMaxVal = oscMaxVal
+        item.oscSendRelease = oscSendRelease
+        item.oscReleaseVal = oscReleaseVal
+        if item.hasLED {
+            item.currentLED = idleVelocity
+        }
+    }
+}
+
+struct UndoSnapshot {
+    let description: String
+    let controls: [ControlItem]
+    let activeSlot: Int
+    let timestamp: Date
+    let customEffects: [CustomLightEffect]?
+    let editingCustomFX: CustomLightEffect?
+    let editingFrameIndex: Int?
+}
+
+struct ToastNotificationItem: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let icon: String
 }
 
 struct ControlItem: Identifiable, Codable {
@@ -1023,6 +1365,15 @@ struct ControlItem: Identifiable, Codable {
     var oscMaxVal: Double = 1.0
     var oscSendRelease: Bool = false
     var oscReleaseVal: String = "0.0"
+
+    var typedMSCCommand: MSCCommand {
+        get { MSCCommand(rawValue: mscCommand) ?? .go }
+        set { mscCommand = newValue.rawValue }
+    }
+    var typedOSCArgType: OSCArgumentType {
+        get { OSCArgumentType(rawValue: oscArgType) ?? .none }
+        set { oscArgType = newValue.rawValue }
+    }
 
     var hasLED: Bool { kind == .key }
 
@@ -1132,99 +1483,8 @@ struct ControlItem: Identifiable, Codable {
 }
 
 // ============================================================================
-// SHOW CONTROL PROTOCOL ENGINES: MSC (MIDI SHOW CONTROL), ART-NET 4 & sACN E1.31
+// SHOW CONTROL PROTOCOL MESSAGES & SERIALIZATION
 // ============================================================================
-
-enum MSCCommand: UInt8, CaseIterable, Identifiable, Codable {
-    case go = 0x01
-    case stop = 0x02
-    case resume = 0x03
-    case timedGo = 0x04
-    case load = 0x05
-    case set = 0x06
-    case fire = 0x07
-    case allOff = 0x08
-    case restore = 0x09
-    case reset = 0x0A
-    case goOff = 0x0B
-    case goJam = 0x11
-    case standbyPlus = 0x12
-    case standbyMinus = 0x13
-
-    var id: UInt8 { rawValue }
-
-    var title: String {
-        switch self {
-        case .go: return "GO"
-        case .stop: return "STOP"
-        case .resume: return "RESUME"
-        case .timedGo: return "TIMED GO"
-        case .load: return "LOAD"
-        case .set: return "SET"
-        case .fire: return "FIRE MACRO"
-        case .allOff: return "ALL OFF / PANIC"
-        case .restore: return "RESTORE"
-        case .reset: return "RESET"
-        case .goOff: return "GO OFF"
-        case .goJam: return "GO JAM"
-        case .standbyPlus: return "STANDBY +"
-        case .standbyMinus: return "STANDBY -"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .go: return "play.fill"
-        case .stop: return "stop.fill"
-        case .resume: return "playpause.fill"
-        case .timedGo: return "timer"
-        case .load: return "arrow.down.doc.fill"
-        case .set: return "slider.horizontal.3"
-        case .fire: return "flame.fill"
-        case .allOff: return "exclamationmark.octagon.fill"
-        case .restore: return "arrow.uturn.backward"
-        case .reset: return "arrow.clockwise"
-        case .goOff: return "xmark.circle"
-        case .goJam: return "bolt.horizontal.fill"
-        case .standbyPlus: return "plus.circle.fill"
-        case .standbyMinus: return "minus.circle.fill"
-        }
-    }
-}
-
-enum MSCCommandFormat: UInt8, CaseIterable, Identifiable, Codable {
-    case lightingGeneral = 0x01
-    case movingLights = 0x02
-    case colorChangers = 0x03
-    case soundGeneral = 0x10
-    case soundPlayback = 0x11
-    case soundEffects = 0x12
-    case machinery = 0x20
-    case videoGeneral = 0x30
-    case projection = 0x40
-    case processControl = 0x50
-    case pyro = 0x60
-    case allTypes = 0x7F
-
-    var id: UInt8 { rawValue }
-
-    var label: String {
-        switch self {
-        case .lightingGeneral: return "Lighting (General)"
-        case .movingLights: return "Moving Lights"
-        case .colorChangers: return "Color Changers"
-        case .soundGeneral: return "Sound (General)"
-        case .soundPlayback: return "Sound Playback"
-        case .soundEffects: return "Sound FX"
-        case .machinery: return "Machinery"
-        case .videoGeneral: return "Video (General)"
-        case .projection: return "Projection"
-        case .processControl: return "Process Control"
-        case .pyro: return "Pyrotechnics"
-        case .allTypes: return "All Types (Universal Broadcast)"
-        }
-    }
-}
 
 struct MSCMessage: Identifiable {
     let id = UUID()
@@ -1252,7 +1512,7 @@ struct MSCMessage: Identifiable {
     }
 }
 
-struct ArtNetPacketBuilder {
+struct ArtNetPacketBuilder: DMXPacketBuilder {
     static func buildDMXPacket(universe: UInt16, channels: [UInt8], sequence: UInt8 = 0) -> Data {
         var data = Data()
         // Header: "Art-Net\0"
@@ -1280,11 +1540,15 @@ struct ArtNetPacketBuilder {
     }
 }
 
-struct SACNPacketBuilder {
+struct SACNPacketBuilder: DMXPacketBuilder {
     static let senderCID: [UInt8] = [
         0x42, 0x42, 0x4D, 0x41, 0x4E, 0x41, 0x47, 0x45,
         0x52, 0x2D, 0x53, 0x41, 0x43, 0x4E, 0x30, 0x31
     ]
+
+    static func buildDMXPacket(universe: UInt16, channels: [UInt8], sequence: UInt8 = 0) -> Data {
+        buildDMXPacket(universe: universe, priority: 100, channels: channels, sequence: sequence)
+    }
 
     static func buildDMXPacket(universe: UInt16, priority: UInt8 = 100, channels: [UInt8], sequence: UInt8 = 0, sourceName: String = "BitchManager Pro Show Control") -> Data {
         var data = Data()
@@ -1350,6 +1614,10 @@ struct SACNPacketBuilder {
 }
 
 struct OSCPacketBuilder {
+    static func buildMessage(address: String, argType: OSCArgumentType, argValue: String) -> Data {
+        buildMessage(address: address, argType: argType.rawValue, argValue: argValue)
+    }
+
     static func buildMessage(address: String, argType: String, argValue: String) -> Data {
         var data = Data()
         // Address with 4-byte padding
@@ -1486,7 +1754,7 @@ struct CustomLightEffect: Codable, Identifiable {
     static func buildDefaultConnectEffect() -> CustomLightEffect {
         // 10-Frame 1-Shot Hardware Connection Celebration Sweep + Checkmark Flash
         var frames: [[UInt8]] = []
-        let sweepPalette: [UInt8] = [78, 87, 74, 95, 41, 67, 3]
+        let sweepPalette: [UInt8] = [78, 87, 74, 57, 41, 67, 3]
         // Frames 0..5: Expanding neon ignition ring across all 11 columns & 3x3 keypad
         for step in 0..<6 {
             var f = emptyFrame(fill: 0)
@@ -1535,7 +1803,7 @@ struct CustomLightEffect: Codable, Identifiable {
         ]
         for (k, pos) in BitchBoyKeyMap.keyPositions.enumerated() {
             if heartCoords.contains(where: { $0.0 == pos.col && $0.1 == pos.row }) {
-                heartF1[k] = 95 // Pink
+                heartF1[k] = 57 // Pink
                 heartF2[k] = 72 // Red
             }
         }
@@ -1549,7 +1817,7 @@ struct CustomLightEffect: Codable, Identifiable {
 
         // 2. X-Matrix Cross Flash (6 frames)
         var xFrames: [[UInt8]] = []
-        let pal: [UInt8] = [78, 41, 67, 95, 74, 87]
+        let pal: [UInt8] = [78, 41, 67, 57, 74, 87]
         for step in 0..<6 {
             var f = emptyFrame(fill: 0)
             for k in 0..<49 {
@@ -1570,7 +1838,7 @@ struct CustomLightEffect: Codable, Identifiable {
 
         // 3. Scrolling Neon Bar (11 frames across all 11 columns)
         var barFrames: [[UInt8]] = []
-        let barColors: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let barColors: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
         for c in 0..<11 {
             var f = emptyFrame(fill: 0)
             for k in 0..<49 {
@@ -1684,150 +1952,269 @@ struct PresetSlot: Codable, Identifiable {
     }
 }
 
+// MARK: - CoreMIDI Background C-Callback Factories (Strictly Nonisolated)
+// CoreMIDI invokes packet read and notify blocks on high-priority real-time background threads (e.g. MIDIInPortThread).
+// These factory functions are declared outside @MainActor so that the C-blocks do NOT inherit @MainActor isolation,
+// preventing runtime assertion failures (_dispatch_assert_queue_fail) in libdispatch when MIDI events arrive.
+private func makeCoreMIDINotifyBlock(for engine: BitchBoyEngine) -> MIDINotifyBlock {
+    return { [weak engine] notifyPtr in
+        let msg = notifyPtr.pointee
+        switch msg.messageID {
+        case .msgSetupChanged, .msgObjectAdded, .msgObjectRemoved, .msgPropertyChanged:
+            Task { @MainActor [weak engine] in
+                engine?.scanForBitchBoy()
+            }
+        default:
+            break
+        }
+    }
+}
+
+private func makeCoreMIDIReceiveBlock(for engine: BitchBoyEngine) -> MIDIReceiveBlock {
+    return { [weak engine] eventList, _ in
+        let packetOffset = MemoryLayout<MIDIEventList>.offset(of: \.packet) ?? 8
+        var curPacketPtr = UnsafeMutableRawPointer(mutating: UnsafeRawPointer(eventList)).advanced(by: packetOffset).assumingMemoryBound(to: MIDIEventPacket.self)
+        for _ in 0..<eventList.pointee.numPackets {
+            let curPacket = curPacketPtr.pointee
+            let w0 = curPacket.words.0
+            let msgType = (w0 >> 28) & 0x0F
+            let statusByte = UInt8((w0 >> 16) & 0xFF)
+            let data1 = UInt8((w0 >> 8) & 0xFF)
+            let data2 = UInt8(w0 & 0xFF)
+
+            if msgType == 0x3 {
+                // SysEx 7-bit UMP packet
+                let byteCount = min(6, Int((w0 >> 16) & 0x0F))
+                let w1 = curPacket.words.1
+                let rawBytes: [UInt8] = [
+                    UInt8((w0 >> 8) & 0xFF),
+                    UInt8(w0 & 0xFF),
+                    UInt8((w1 >> 24) & 0xFF),
+                    UInt8((w1 >> 16) & 0xFF),
+                    UInt8((w1 >> 8) & 0xFF),
+                    UInt8(w1 & 0xFF)
+                ]
+                let slice = Array(rawBytes.prefix(byteCount))
+                Task { @MainActor [weak engine] in
+                    engine?.handleIncomingSysExBytes(slice)
+                }
+            } else if msgType == 0x2 || statusByte >= 0x80 {
+                Task { @MainActor [weak engine] in
+                    engine?.handleMIDIMessage(status: statusByte, data1: data1, data2: data2)
+                }
+            }
+
+            curPacketPtr = MIDIEventPacketNext(curPacketPtr)
+        }
+    }
+}
+
+private func makeCoreMIDIVirtualInBlock(for engine: BitchBoyEngine) -> MIDIReadBlock {
+    return { [weak engine] packetList, _ in
+        let packetOffset = MemoryLayout<MIDIPacketList>.offset(of: \.packet) ?? 4
+        let dataOffset = MemoryLayout<MIDIPacket>.offset(of: \.data) ?? 12
+        var curPacketPtr = UnsafeMutableRawPointer(mutating: UnsafeRawPointer(packetList)).advanced(by: packetOffset).assumingMemoryBound(to: MIDIPacket.self)
+        for _ in 0..<packetList.pointee.numPackets {
+            let curPacket = curPacketPtr.pointee
+            let length = Int(curPacket.length)
+            if length >= 3 {
+                let bytesPtr = UnsafeRawPointer(curPacketPtr).advanced(by: dataOffset).assumingMemoryBound(to: UInt8.self)
+                if bytesPtr[0] == 0xF0 {
+                    let sysEx = Array(UnsafeBufferPointer(start: bytesPtr, count: length))
+                    Task { @MainActor [weak engine] in
+                        engine?.handleIncomingSysExBytes(sysEx)
+                    }
+                } else {
+                    let statusByte = bytesPtr[0]
+                    let data1 = bytesPtr[1]
+                    let data2 = bytesPtr[2]
+                    Task { @MainActor [weak engine] in
+                        engine?.handleInboundExternalMIDI(status: statusByte, data1: data1, data2: data2)
+                    }
+                }
+            }
+            curPacketPtr = MIDIPacketNext(curPacketPtr)
+        }
+    }
+}
+
 // ============================================================================
 // 2. HARDWARE ENGINE // COREMIDI & TELEMETRY
 // ============================================================================
 
 @MainActor
-final class BitchBoyEngine: ObservableObject {
-    private var lastStreamUpdateTime: Double = 0
-    @Published var controls: [ControlItem] = []
-    @Published var selectedIndex: Int = 0
-    @Published var selectedIndices: Set<Int> = []
-    @Published var slots: [PresetSlot] = []
-    @Published var activeSlot: Int = 0
+@Observable
+final class BitchBoyEngine {
+    @ObservationIgnored private var lastStreamUpdateTime: Double = 0
+    var controls: [ControlItem] = []
+    var selectedIndex: Int = 0
+    var selectedIndices: Set<Int> = []
+    var slots: [PresetSlot] = []
+    var activeSlot: Int = 0
 
     // Hardware status
-    @Published var isConnected: Bool = false
-    @Published var deviceName: String = "BitchBoy V1 (Hardware)"
-    @Published var lastStreamMessage: String = "IDLE // READY"
-    @Published var midiLogs: [String] = []
+    var isConnected: Bool = false
+    var deviceName: String = "BitchBoy V1 (Hardware)"
+    var lastStreamMessage: String = "IDLE // READY"
+    var midiLogs: [String] = []
 
     // Customization & Themes
-    @Published var currentTheme: ChassisTheme = .petrolTeal
-    @Published var ledPalette: LEDPaletteMode = .multiVelocity
-    @Published var soundPack: SoundPack = .arcade8Bit
-    @Published var currentFXMode: LEDFXMode = .staticFX
-    @Published var fxSpeed: Double = 1.0
-    @Published var vuMeterLEDsEnabled: Bool = false
-    @Published var isRainbowRunning: Bool = false
+    var currentTheme: ChassisTheme = .petrolTeal
+    var ledPalette: LEDPaletteMode = .multiVelocity
+    var soundPack: SoundPack = .arcade8Bit
+    var currentFXMode: LEDFXMode = .staticFX
+    var fxSpeed: Double = 1.0
+    var vuMeterLEDsEnabled: Bool = false
+    var isRainbowRunning: Bool = false
 
     // Mascot
-    @Published var mascotScale: CGFloat = 1.0
-    @Published var mascotSpeech: String = "ALL 69 HARDWARE CONTROLS LIVE!"
-    @Published var mascotSpeechVisible: Bool = false
+    var mascotScale: CGFloat = 1.0
+    var mascotSpeech: String = "ALL 69 HARDWARE CONTROLS LIVE!"
+    var mascotSpeechVisible: Bool = false
 
     // In-Chassis Drawer
-    @Published var inChassisTab: String = "NOTES"
-    @Published var userNotesText: String = "Show notes: Slot A configured for live Ableton clip triggers."
+    var inChassisTab: String = "NOTES"
+    var userNotesText: String = "Show notes: Slot A configured for live Ableton clip triggers."
 
     // CoreMIDI internals
-    private var midiClient = MIDIClientRef()
-    private var inputPort = MIDIPortRef()
-    private var outputPort = MIDIPortRef()
-    private var bitchBoyDestination: MIDIEndpointRef = 0
+    @ObservationIgnored private var midiClient = MIDIClientRef()
+    @ObservationIgnored private var inputPort = MIDIPortRef()
+    @ObservationIgnored private var outputPort = MIDIPortRef()
+    @ObservationIgnored private var bitchBoyDestination: MIDIEndpointRef = 0
 
-    private var fxTimer: AnyCancellable?
-    private var watchdogTimer: AnyCancellable?
+    @ObservationIgnored private var fxTimer: AnyCancellable?
+    @ObservationIgnored private var watchdogTimer: AnyCancellable?
     // --- LEFT WING: MIDI ROUTER & OUTPUT MATRIX STATE ---
-    @Published var leftWingTab: String = "ROUTER" // "ROUTER", "TELEMETRY", "MACROS"
-    @Published var midiThruEnabled: Bool = true
-    @Published var virtualOutEnabled: Bool = true
-    @Published var forwardUIInteractions: Bool = true
-    @Published var forwardNotes: Bool = true
-    @Published var forwardCCs: Bool = true
-    @Published var remapChannel: Int = 0 // 0 = Original Ch 1, 1..16 = Forced Ch 1..16
-    @Published var transposeSemitones: Int = 0 // -24 .. +24
-    @Published var velocityCurve: MIDIVelocityCurve = .linear
-    @Published var availableOutputTargets: [MIDIOutputTarget] = []
-    @Published var selectedOutputNames: Set<String> = []
-    @Published var txPacketCount: Int = 0
-    @Published var lastRoutedMessage: String = "READY // NO TX YET"
-    @Published var routerPacketHistory: [String] = []
-    @Published var tapTempoBPM: Double = 120.0
-    private var lastTapTimes: [Date] = []
-    private var virtualSourceEndpoint = MIDIEndpointRef()
-    private var virtualDestinationEndpoint = MIDIEndpointRef()
+    var leftWingTab: String = "ROUTER" // "ROUTER", "TELEMETRY", "MACROS"
+    var midiThruEnabled: Bool = true
+    var virtualOutEnabled: Bool = true
+    var forwardUIInteractions: Bool = true
+    var forwardNotes: Bool = true
+    var forwardCCs: Bool = true
+    var remapChannel: Int = 0 // 0 = Original Ch 1, 1..16 = Forced Ch 1..16
+    var transposeSemitones: Int = 0 // -24 .. +24
+    var velocityCurve: MIDIVelocityCurve = .linear
+    var availableOutputTargets: [MIDIOutputTarget] = []
+    var selectedOutputNames: Set<String> = []
+    var txPacketCount: Int = 0
+    var lastRoutedMessage: String = "READY // NO TX YET"
+    var routerPacketHistory: [String] = []
+    var tapTempoBPM: Double = 120.0
+    @ObservationIgnored private var lastTapTimes: [Date] = []
+    @ObservationIgnored private var virtualSourceEndpoint = MIDIEndpointRef()
+    @ObservationIgnored private var virtualDestinationEndpoint = MIDIEndpointRef()
 
     // --- PRO SHOW CONTROL: MSC, OSC, ART-NET & sACN BROADCAST STATE ---
-    @Published var mscBroadcastEnabled: Bool = true
-    @Published var mscDeviceID: UInt8 = 1
-    @Published var mscCommandFormat: MSCCommandFormat = .allTypes
-    @Published var mscCueNumber: String = "1.0"
-    @Published var mscCueList: String = ""
-    @Published var mscAutoTriggerOnInbound: Bool = true
-    @Published var mscLogHistory: [MSCMessage] = []
-    private var inboundSysExBuffer: [UInt8] = []
+    var mscBroadcastEnabled: Bool = true
+    var mscDeviceID: UInt8 = 1
+    var mscCommandFormat: MSCCommandFormat = .allTypes
+    var mscCueNumber: String = "1.0"
+    var mscCueList: String = ""
+    var mscAutoTriggerOnInbound: Bool = true
+    var mscLogHistory: [MSCMessage] = []
+    @ObservationIgnored private var inboundSysExBuffer: [UInt8] = []
 
     // Custom OSC Transmitter
-    @Published var customOSCHost: String = "127.0.0.1"
-    @Published var customOSCPort: UInt16 = 53000 // Default QLab / DAW port
-    @Published var customOSCAddress: String = "/cue/selected/start"
-    @Published var customOSCArgType: String = "NONE" // NONE, FLOAT, INT, STRING, BOOLEAN_TRUE, BOOLEAN_FALSE
-    @Published var customOSCArgValue: String = "1.0"
+    var customOSCHost: String = "127.0.0.1"
+    var customOSCPort: UInt16 = 53000 // Default QLab / DAW port
+    var customOSCAddress: String = "/cue/selected/start"
+    var customOSCArgType: String = "NONE" // NONE, FLOAT, INT, STRING, BOOLEAN_TRUE, BOOLEAN_FALSE
+    var customOSCArgValue: String = "1.0"
 
     // Art-Net 4 Transmitter
-    @Published var artNetHost: String = "127.0.0.1"
-    @Published var artNetPort: UInt16 = 6454
-    @Published var artNetUniverse: UInt16 = 0
-    @Published var artNetChannels: [UInt8] = Array(repeating: 0, count: 512)
-    @Published var artNetSequence: UInt8 = 0
-    @Published var artNetMirrorLEDs: Bool = false
+    var artNetHost: String = "127.0.0.1"
+    var artNetPort: UInt16 = 6454
+    var artNetUniverse: UInt16 = 0
+    var artNetChannels: [UInt8] = Array(repeating: 0, count: 512)
+    var artNetSequence: UInt8 = 0
+    var artNetMirrorLEDs: Bool = false
 
     // ANSI E1.31 sACN Transmitter
-    @Published var sacnHost: String = "" // Empty = standard Multicast 239.255.x.y
-    @Published var sacnPort: UInt16 = 5568
-    @Published var sacnUniverse: UInt16 = 1
-    @Published var sacnPriority: UInt8 = 100
-    @Published var sacnChannels: [UInt8] = Array(repeating: 0, count: 512)
-    @Published var sacnSequence: UInt8 = 0
+    var sacnHost: String = "" // Empty = standard Multicast 239.255.x.y
+    var sacnPort: UInt16 = 5568
+    var sacnUniverse: UInt16 = 1
+    var sacnPriority: UInt8 = 100
+    var sacnChannels: [UInt8] = Array(repeating: 0, count: 512)
+    var sacnSequence: UInt8 = 0
 
     // Customizable Show Control & MIDI Feedback Engine
-    @Published var hardwareFeedbackEnabled: Bool = true
-    @Published var inboundMIDIEchoEnabled: Bool = true
-    @Published var showControlSubTab: String = "OSC" // "OSC", "MSC", "ARTNET", "SACN", "FEEDBACK"
-    @Published var oscStudioMode: String = "MAPPINGS" // "MAPPINGS", "TRANSMITTER"
-    @Published var oscHardwareBroadcastEnabled: Bool = false
-    @Published var artNetMirrorHardwareFaders: Bool = false
-    @Published var grandMasterLevel: Double = 1.0
-    @Published var isBlackoutActive: Bool = false
+    var hardwareFeedbackEnabled: Bool = true
+    var inboundMIDIEchoEnabled: Bool = true
+    var showControlSubTab: String = "OSC" // "OSC", "MSC", "ARTNET", "SACN", "FEEDBACK"
+    var oscStudioMode: String = "MAPPINGS" // "MAPPINGS", "TRANSMITTER"
+    var oscHardwareBroadcastEnabled: Bool = false
+    var artNetMirrorHardwareFaders: Bool = false
+    var grandMasterLevel: Double = 1.0
+    var isBlackoutActive: Bool = false
 
     // --- MIDI TO OSC CUSTOMIZATION MATRIX ---
-    @Published var midiToOSCMappingActive: Bool = true
-    @Published var midiToOSCFilter: String = "ALL" // "ALL", "GRID", "STRIP", "PAD", "VFADERS", "HFADERS", "MASTER_KNOBS"
-    @Published var midiToOSCSearchText: String = ""
+    var midiToOSCMappingActive: Bool = true
+    var midiToOSCFilter: String = "ALL" // "ALL", "GRID", "STRIP", "PAD", "VFADERS", "HFADERS", "MASTER_KNOBS"
+    var midiToOSCSearchText: String = ""
 
     // --- RIGHT WING: CUSTOM LIGHTING FX STUDIO STATE ---
-    @Published var rightWingTab: String = "SEQUENCER" // "SEQUENCER", "WAVESYNTH", "LIBRARY"
-    @Published var customEffects: [CustomLightEffect] = []
-    @Published var editingCustomFX: CustomLightEffect = CustomLightEffect.buildStarterEffects()[0]
-    @Published var editingFrameIndex: Int = 0
-    @Published var customBrushVelocity: UInt8 = 78
-    @Published var paintOnMainChassis: Bool = false
-    @Published var isPlayingCustomFX: Bool = false
-    @Published var activeCustomFXName: String = ""
-    private var customFXStep: Int = 0
-    private var customFXDirection: Int = 1
+    var rightWingTab: String = "SEQUENCER" // "SEQUENCER", "WAVESYNTH", "LIBRARY"
+    var customEffects: [CustomLightEffect] = []
+    var editingCustomFX: CustomLightEffect = CustomLightEffect.buildStarterEffects()[0]
+    var editingFrameIndex: Int = 0
+    var customBrushVelocity: UInt8 = 78
+    var paintOnMainChassis: Bool = false
+    var isPlayingCustomFX: Bool = false
+    var activeCustomFXName: String = ""
+    @ObservationIgnored private var customFXStep: Int = 0
+    @ObservationIgnored private var customFXDirection: Int = 1
 
     // --- RIGHT WING BOTTOM: REACTIVE MECHANICAL KEYBOARD FX ENGINE STATE ---
-    @Published var reactiveKeyFXMode: ReactiveKeyFXMode = .ripple
-    @Published var reactiveFXSpeed: Double = 1.4
-    @Published var reactiveFXColorVelocity: UInt8 = 78 // 0 = Rainbow Dynamic, >0 = Specific Neon Color
-    @Published var reactiveFXRainbowColor: Bool = true
-    @Published var reactiveWaveCount: Int = 0
+    var reactiveKeyFXMode: ReactiveKeyFXMode = .ripple
+    var reactiveFXSpeed: Double = 1.4
+    var reactiveFXColorVelocity: UInt8 = 78 // 0 = Rainbow Dynamic, >0 = Specific Neon Color
+    var reactiveFXRainbowColor: Bool = true
+    var reactiveWaveCount: Int = 0
     private(set) var activeReactivePulses: [ReactivePulseEvent] = []
-    private var lastReactiveOriginKey: Int = -1
-    private var reactiveFXTimer: DispatchSourceTimer?
-    private var lastSentReactiveLEDs: [UInt8] = Array(repeating: 255, count: 49)
+    @ObservationIgnored private var lastReactiveOriginKey: Int = -1
+    @ObservationIgnored private var reactiveFXTimer: DispatchSourceTimer?
+    @ObservationIgnored private var lastSentReactiveLEDs: [UInt8] = Array(repeating: 255, count: 49)
+
+    // --- COPY / PASTE CLIPBOARD ENGINE ---
+    var copiedControlConfig: ControlClipboardData? = nil
+    var copiedColorVelocity: UInt8? = nil
+    var copiedFXFrame: [UInt8]? = nil
+    var hasCopiedConfig: Bool { copiedControlConfig != nil || NSPasteboard.general.string(forType: .string)?.contains("feedbackMode") == true }
+    var hasCopiedColor: Bool { copiedColorVelocity != nil }
+    var hasCopiedFXFrame: Bool { copiedFXFrame != nil }
+
+    // --- UNDO / REDO MEMORY ENGINE ---
+    private var undoStack: [UndoSnapshot] = []
+    private var redoStack: [UndoSnapshot] = []
+    var undoStepsCount: Int = 0
+    var redoStepsCount: Int = 0
+    var maxUndoSteps: Int = 100
+    var lastUndoActionName: String = ""
+    var lastRedoActionName: String = ""
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    // --- TOAST NOTIFICATION BANNER ENGINE ---
+    var toastNotification: ToastNotificationItem? = nil
+    @ObservationIgnored private var toastDismissTask: DispatchWorkItem? = nil
+
+    // --- 120 FPS PROMOTION HIGH REFRESH RATE & TELEMETRY ---
+    var targetFPS: Int = 120
+    var measuredFPS: Double = 120.0
+    var frameLatencyMs: Double = 8.3
+    @ObservationIgnored private var lastFrameTimestamp: Double = 0
+    @ObservationIgnored private var frameCountSinceLastMeasure: Int = 0
+    @ObservationIgnored private var lastFPSMeasureTimestamp: Double = 0
+    @ObservationIgnored private var lastHardwareMIDISendTime: Double = 0
 
     // --- UI SCALING / ZOOM & CUSTOM APP ICON STATE ---
     // --- ALWAYS ON TOP (FLOATING WINDOW) STATE ---
-    @Published var isWindowAlwaysOnTop: Bool = false
+    var isWindowAlwaysOnTop: Bool = false
     private let alwaysOnTopStorageKey = "BitchBoy_AlwaysOnTop_v1"
 
-    @Published var uiScale: CGFloat = 1.15
-    @Published var autoFitWindow: Bool = true
-    @Published var lastComputedFitScale: CGFloat = 1.0
+    var uiScale: CGFloat = 1.15
+    var autoFitWindow: Bool = true
+    var lastComputedFitScale: CGFloat = 1.0
     private let uiScaleStorageKey = "BitchBoy_UIScale_v1"
     private let uiAutoFitStorageKey = "BitchBoy_UIAutoFit_v1"
 
@@ -1836,64 +2223,310 @@ final class BitchBoyEngine: ObservableObject {
     private let connectFXNameStorageKey = "BitchBoy_ConnectFXName_v1"
 
     // --- ON-CONNECT BITCHBOY HARDWARE NOTIFICATION & CUSTOM FX STATE ---
-    @Published var connectEffectEnabled: Bool = true
-    @Published var connectCustomFXName: String = "BITCHBOY CONNECT IGNITION"
-    @Published var showConnectionBanner: Bool = false
-    @Published var connectionBannerTitle: String = "🔌 BITCHBOY CONTROLLER CONNECTED & READY"
-    @Published var connectionBannerSubtitle: String = "Hardware Recognized // Playing On-Connect FX"
+    var connectEffectEnabled: Bool = true
+    var connectCustomFXName: String = "BITCHBOY CONNECT IGNITION"
+    var showConnectionBanner: Bool = false
+    var connectionBannerTitle: String = "🔌 BITCHBOY CONTROLLER CONNECTED & READY"
+    var connectionBannerSubtitle: String = "Hardware Recognized // Playing On-Connect FX"
 
     // --- CUSTOM SOUND UPLOAD STUDIO & MODULE WINDOW / SPOTLIGHT / REARRANGE STATE ---
-    @Published var showCustomSoundStudio: Bool = false
-    @Published var customSoundUpdateToken: Int = 0
-    @Published var spotlightModule: StudioModuleID? = nil
-    @Published var moduleOrder: [StudioModuleID] = [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal]
-    @Published var isRearrangingModules: Bool = false
-    @Published var draggingModule: StudioModuleID? = nil
-    @Published var detachedModules: Set<StudioModuleID> = []
-    fileprivate var moduleWindows: [StudioModuleID: NSWindow] = [:]
-    fileprivate var moduleWindowDelegates: [StudioModuleID: ModuleWindowCloseDelegate] = [:]
-    @Published var pinnedModuleWindows: Set<StudioModuleID> = []
+    var showCustomSoundStudio: Bool = false
+    var customSoundUpdateToken: Int = 0
+    var spotlightModule: StudioModuleID? = nil
+    var moduleOrder: [StudioModuleID] = [.showControl, .memorySlots, .midiRouter, .customFXStudio, .reactiveKeyFX, .terminal, .hardwareMIDIFilter]
+    var isRearrangingModules: Bool = false
+    var draggingModule: StudioModuleID? = nil
+    var detachedModules: Set<StudioModuleID> = []
+    @ObservationIgnored fileprivate var moduleWindows: [StudioModuleID: NSWindow] = [:]
+    @ObservationIgnored fileprivate var moduleWindowDelegates: [StudioModuleID: ModuleWindowCloseDelegate] = [:]
+    var pinnedModuleWindows: Set<StudioModuleID> = []
     private let moduleOrderStorageKey = "BitchBoy_ModuleOrder_v1"
     private let soundPackStorageKey = "BitchBoy_SoundPack_v1"
 
+    // --- HARDWARE MIDI I/O & MUTE CONTROL ENGINE ---
+    var hardwareMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(hardwareMIDISendEnabled, forKey: "bb_hw_midi_send_enabled")
+            if hardwareMIDISendEnabled {
+                hardwareInputActionsEnabled = true
+            }
+        }
+    }
+    var hardwareInputActionsEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(hardwareInputActionsEnabled, forKey: "bb_hw_input_actions_enabled") }
+    }
+    var qwertyKeybindsEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(qwertyKeybindsEnabled, forKey: "bb_hw_qwerty_enabled") }
+    }
+    var keyGridMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(keyGridMIDISendEnabled, forKey: "bb_keygrid_midi_send")
+            setSectionBlackout(section: "keyGrid", enabled: keyGridMIDISendEnabled)
+            if keyGridMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+    var keyStripMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(keyStripMIDISendEnabled, forKey: "bb_keystrip_midi_send")
+            setSectionBlackout(section: "keyStrip", enabled: keyStripMIDISendEnabled)
+            if keyStripMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+    var keypadMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(keypadMIDISendEnabled, forKey: "bb_keypad_midi_send")
+            setSectionBlackout(section: "keypad", enabled: keypadMIDISendEnabled)
+            if keypadMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+    var verticalFadersMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(verticalFadersMIDISendEnabled, forKey: "bb_vfaders_midi_send")
+            if verticalFadersMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+    var horizontalFadersMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(horizontalFadersMIDISendEnabled, forKey: "bb_hfaders_midi_send")
+            if horizontalFadersMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+    var rotaryKnobsMIDISendEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(rotaryKnobsMIDISendEnabled, forKey: "bb_knobs_midi_send")
+            if rotaryKnobsMIDISendEnabled { hardwareInputActionsEnabled = true }
+        }
+    }
+
+    func isSectionEnabled(for index: Int) -> Bool {
+        guard let section = HardwareSection.section(for: index) else { return true }
+        switch section {
+        case .grid8x4: return keyGridMIDISendEnabled
+        case .strip1x8: return keyStripMIDISendEnabled
+        case .keypad3x3: return keypadMIDISendEnabled
+        case .verticalFaders: return verticalFadersMIDISendEnabled
+        case .horizontalFaders: return horizontalFadersMIDISendEnabled
+        case .rotaryKnobs: return rotaryKnobsMIDISendEnabled
+        }
+    }
+
+    func controlIndex(forNote note: UInt8) -> Int? {
+        if note < 128 {
+            let idx = BitchBoyKeyMap.noteToIndex[Int(note)]
+            if idx >= 0 { return idx }
+        }
+        return controls.firstIndex(where: { $0.kind == .key && $0.number == note })
+    }
+
+    func controlIndex(forCC cc: UInt8) -> Int? {
+        if cc < 128 {
+            let idx = BitchBoyKeyMap.ccToIndex[Int(cc)]
+            if idx >= 0 { return idx }
+        }
+        return controls.firstIndex(where: { ($0.kind == .vfader || $0.kind == .hfader || $0.kind == .knob) && $0.number == cc })
+    }
+
+    func setSectionBlackout(section: HardwareSection, enabled: Bool) {
+        setSectionBlackout(section: section.rawValue, enabled: enabled)
+    }
+
+    func setSectionBlackout(section: String, enabled: Bool) {
+        let indices: [Int]
+        switch section {
+        case "keyGrid", HardwareSection.grid8x4.rawValue:
+            indices = Array(HardwareSection.grid8x4.indexRange)
+        case "keyStrip", HardwareSection.strip1x8.rawValue:
+            indices = Array(HardwareSection.strip1x8.indexRange)
+        case "keypad", HardwareSection.keypad3x3.rawValue:
+            indices = Array(HardwareSection.keypad3x3.indexRange)
+        case "all":
+            indices = Array(0..<49)
+        default:
+            indices = []
+        }
+
+        var batch: [(note: UInt8, velocity: UInt8)] = []
+        for idx in indices where idx < controls.count {
+            if !enabled {
+                controls[idx].currentLED = 0
+                controls[idx].isPressed = false
+                batch.append((note: controls[idx].number, velocity: 0))
+            } else {
+                let restoreVel: UInt8
+                switch controls[idx].feedbackMode {
+                case .toggle:
+                    restoreVel = controls[idx].toggleLatched ? controls[idx].activeVelocity : controls[idx].idleVelocity
+                case .disabled:
+                    restoreVel = 0
+                default:
+                    restoreVel = controls[idx].idleVelocity
+                }
+                controls[idx].currentLED = restoreVel
+                controls[idx].isPressed = false
+                batch.append((note: controls[idx].number, velocity: restoreVel))
+            }
+        }
+        if !batch.isEmpty {
+            sendBatchNoteOn(notesAndVelocities: batch)
+        }
+    }
+    var hardwareLEDSyncEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(hardwareLEDSyncEnabled, forKey: "bb_hw_led_sync_enabled") }
+    }
+    var oscSendEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(oscSendEnabled, forKey: "bb_osc_send_enabled") }
+    }
+    var artNetSendEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(artNetSendEnabled, forKey: "bb_artnet_send_enabled") }
+    }
+    var sacnSendEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(sacnSendEnabled, forKey: "bb_sacn_send_enabled") }
+    }
+    var uiClickSoundEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(uiClickSoundEnabled, forKey: "bb_ui_click_sound") }
+    }
+    var blockedMIDIPacketsCount: Int = 0
+    var routedMIDIPacketsCount: Int = 0
+
+    // High performance throttling timestamps for sub-millisecond smooth animations & gesture tracking
+    @ObservationIgnored var lastStreamMessageUpdateTime: Date = Date.distantPast
+    @ObservationIgnored var lastRoutedMessageUpdateTime: Date = Date.distantPast
+    @ObservationIgnored var lastProtocolEventLogTime: Date = Date.distantPast
+
+    func applyProfileHotkeysOnly() {
+        hardwareMIDISendEnabled = false
+        qwertyKeybindsEnabled = true
+        hardwareInputActionsEnabled = true
+        keyGridMIDISendEnabled = true
+        keyStripMIDISendEnabled = true
+        keypadMIDISendEnabled = true
+        verticalFadersMIDISendEnabled = true
+        horizontalFadersMIDISendEnabled = true
+        rotaryKnobsMIDISendEnabled = true
+        setSectionBlackout(section: "all", enabled: true)
+        SoundEffect.keyTap.play(with: soundPack)
+        log("⌨️ Switched Profile: HOTKEYS ONLY (MIDI Muted - No Keybind Conflicts)")
+    }
+
+    func applyProfileDAWMIDIOnly() {
+        hardwareMIDISendEnabled = true
+        qwertyKeybindsEnabled = false
+        hardwareInputActionsEnabled = true
+        keyGridMIDISendEnabled = true
+        keyStripMIDISendEnabled = true
+        keypadMIDISendEnabled = true
+        verticalFadersMIDISendEnabled = true
+        horizontalFadersMIDISendEnabled = true
+        rotaryKnobsMIDISendEnabled = true
+        setSectionBlackout(section: "all", enabled: true)
+        SoundEffect.knobTick.play(with: soundPack)
+        log("🎹 Switched Profile: DAW / MIDI ONLY (Hotkeys Muted)")
+    }
+
+    func applyProfileHybrid() {
+        hardwareMIDISendEnabled = true
+        qwertyKeybindsEnabled = true
+        hardwareInputActionsEnabled = true
+        keyGridMIDISendEnabled = true
+        keyStripMIDISendEnabled = true
+        keypadMIDISendEnabled = true
+        verticalFadersMIDISendEnabled = true
+        horizontalFadersMIDISendEnabled = true
+        rotaryKnobsMIDISendEnabled = true
+        setSectionBlackout(section: "all", enabled: true)
+        SoundEffect.knobTick.play(with: soundPack)
+        log("⚡️ Switched Profile: HYBRID (All MIDI & Hotkeys Active)")
+    }
+
+    func applyProfilePanicMute() {
+        hardwareMIDISendEnabled = false
+        qwertyKeybindsEnabled = false
+        hardwareInputActionsEnabled = false
+        keyGridMIDISendEnabled = false
+        keyStripMIDISendEnabled = false
+        keypadMIDISendEnabled = false
+        verticalFadersMIDISendEnabled = false
+        horizontalFadersMIDISendEnabled = false
+        rotaryKnobsMIDISendEnabled = false
+        setSectionBlackout(section: "all", enabled: false)
+        SoundEffect.keyTap.play(with: soundPack)
+        log("🛑 Switched Profile: PANIC MUTE (All Hardware Out Muted & Blacked Out)")
+    }
+
+    func unmuteAllInputs() {
+        hardwareMIDISendEnabled = true
+        hardwareInputActionsEnabled = true
+        qwertyKeybindsEnabled = true
+        keyGridMIDISendEnabled = true
+        keyStripMIDISendEnabled = true
+        keypadMIDISendEnabled = true
+        verticalFadersMIDISendEnabled = true
+        horizontalFadersMIDISendEnabled = true
+        rotaryKnobsMIDISendEnabled = true
+        midiThruEnabled = true
+        forwardNotes = true
+        forwardCCs = true
+        forwardUIInteractions = true
+        virtualOutEnabled = true
+        setSectionBlackout(section: "all", enabled: true)
+        blockedMIDIPacketsCount = 0
+        if soundPack == .mute {
+            soundPack = .arcade8Bit
+        }
+        uiClickSoundEnabled = true
+        SoundEffect.keyTap.play(with: soundPack)
+        log("🔊 Switched Profile: UNMUTE ALL (All Hardware, Sliders, Knobs & MIDI Routing Active)")
+    }
+
+    func toggleMasterHardwareMIDISend() {
+        hardwareMIDISendEnabled.toggle()
+        if hardwareMIDISendEnabled {
+            hardwareInputActionsEnabled = true
+        }
+        SoundEffect.knobTick.play(with: soundPack)
+        log(hardwareMIDISendEnabled ? "🔌 Hardware MIDI Send: ENABLED" : "🔇 Hardware MIDI Send: MUTED")
+    }
+
     // --- PROTOCOL TERMINAL // INCOMING & OUTGOING PACKET MONITOR & NETWORK STATE ---
-    @Published var protocolEvents: [ProtocolEvent] = []
-    @Published var isProtocolPaused: Bool = false
-    @Published var protocolFilter: ProtocolEvent.EventType = .all
-    @Published var terminalTab: TerminalTab = .console
+    var protocolEvents: [ProtocolEvent] = []
+    var isProtocolPaused: Bool = false
+    var protocolFilter: ProtocolEvent.EventType = .all
+    var terminalTab: TerminalTab = .console
+    var terminalFontSize: CGFloat = 11.5
+    private let terminalFontSizeStorageKey = "BitchBoy_TerminalFontSize_v1"
 
     // Receiving OSC Configuration
-    @Published var oscIncomingHost: String = "0.0.0.0"
-    @Published var oscIncomingPort: UInt16 = 8000
-    @Published var isOscListenerActive: Bool = false
-    private var oscListener: NWListener?
+    var oscIncomingHost: String = "0.0.0.0"
+    var oscIncomingPort: UInt16 = 8000
+    var isOSCListenerActive: Bool = false
+    @ObservationIgnored private var oscListener: NWListener?
 
     // Receiving MIDI Configuration
-    @Published var availableInputSources: [String] = []
-    @Published var selectedMidiInputDevice: String = "ALL" // "ALL", "AUTO", or device name
-    @Published var selectedMidiInputChannel: Int = 0 // 0 = Omni (All), 1..16
+    var availableInputSources: [String] = []
+    var selectedMIDIInputDevice: String = "ALL" // "ALL", "AUTO", or device name
+    var selectedMIDIInputChannel: Int = 0 // 0 = Omni (All), 1..16
 
     // Receiving Art-Net Configuration
-    @Published var artNetIncomingHost: String = "0.0.0.0"
-    @Published var artNetIncomingPort: UInt16 = 6454
-    @Published var artNetIncomingUniverse: UInt16 = 0
-    @Published var isArtNetListenerActive: Bool = false
-    private var artNetListener: NWListener?
+    var artNetIncomingHost: String = "0.0.0.0"
+    var artNetIncomingPort: UInt16 = 6454
+    var artNetIncomingUniverse: UInt16 = 0
+    var isArtNetListenerActive: Bool = false
+    @ObservationIgnored private var artNetListener: NWListener?
 
     // Receiving sACN Configuration
-    @Published var sacnIncomingHost: String = "0.0.0.0"
-    @Published var sacnIncomingPort: UInt16 = 5568
-    @Published var sacnIncomingUniverse: UInt16 = 1
-    @Published var issACNListenerActive: Bool = false
-    private var sacnListener: NWListener?
+    var sacnIncomingHost: String = "0.0.0.0"
+    var sacnIncomingPort: UInt16 = 5568
+    var sacnIncomingUniverse: UInt16 = 1
+    var issACNListenerActive: Bool = false
+    @ObservationIgnored private var sacnListener: NWListener?
 
     // Packet Telemetry & Counters
-    @Published var totalPacketsReceived: Int = 0
-    @Published var midiPacketsCount: Int = 0
-    @Published var oscPacketsCount: Int = 0
-    @Published var dmxPacketsCount: Int = 0
-    @Published var mscPacketsCount: Int = 0
-    @Published var lastPacketTime: Date? = nil
+    var totalPacketsReceived: Int = 0
+    var midiPacketsCount: Int = 0
+    var oscPacketsCount: Int = 0
+    var dmxPacketsCount: Int = 0
+    var mscPacketsCount: Int = 0
+    var lastPacketTime: Date? = nil
 
     private let oscPortStorageKey = "BitchBoy_OSCIncomingPort_v1"
     private let oscHostStorageKey = "BitchBoy_OSCIncomingHost_v1"
@@ -1907,13 +2540,13 @@ final class BitchBoyEngine: ObservableObject {
     private let sacnUnivStorageKey = "BitchBoy_SACNIncomingUniverse_v1" 
 
     // --- DYNAMIC MODULE PLACEMENT & RESIZING ENGINE ---
-    @Published var leftWingModules: [StudioModuleID] = [.showControl, .memorySlots]
-    @Published var rightWingModules: [StudioModuleID] = [.midiRouter, .customFXStudio]
-    @Published var bottomRackModules: [StudioModuleID] = [.reactiveKeyFX]
-    @Published var moduleCustomHeights: [StudioModuleID: CGFloat] = [:]
-    @Published var moduleCustomWidths: [StudioModuleID: CGFloat] = [:]
-    @Published var leftWingWidth: CGFloat = 380
-    @Published var rightWingWidth: CGFloat = 380
+    var leftWingModules: [StudioModuleID] = [.showControl, .memorySlots]
+    var rightWingModules: [StudioModuleID] = [.midiRouter, .customFXStudio]
+    var bottomRackModules: [StudioModuleID] = [.reactiveKeyFX]
+    var moduleCustomHeights: [StudioModuleID: CGFloat] = [:]
+    var moduleCustomWidths: [StudioModuleID: CGFloat] = [:]
+    var leftWingWidth: CGFloat = 380
+    var rightWingWidth: CGFloat = 380
     private let leftWingStorageKey = "BitchBoy_LeftWingModules_v2"
     private let rightWingStorageKey = "BitchBoy_RightWingModules_v2"
     private let bottomRackStorageKey = "BitchBoy_BottomRackModules_v2"
@@ -1922,38 +2555,38 @@ final class BitchBoyEngine: ObservableObject {
 
     // --- CUSTOM THEMES STATE ---
     static var activeCustomThemeStatic: CustomChassisTheme = CustomChassisTheme.defaultCustom()
-    @Published var customThemes: [CustomChassisTheme] = []
-    @Published var activeCustomTheme: CustomChassisTheme = CustomChassisTheme.defaultCustom() {
+    var customThemes: [CustomChassisTheme] = []
+    var activeCustomTheme: CustomChassisTheme = CustomChassisTheme.defaultCustom() {
         didSet {
             Self.activeCustomThemeStatic = activeCustomTheme
         }
     }
-    @Published var showCustomThemeStudio: Bool = false
+    var showCustomThemeStudio: Bool = false
     private let customThemesStorageKey = "BitchBoy_CustomThemes_v1"
-    private let activeCustomThemeIdStorageKey = "BitchBoy_ActiveCustomThemeID_v1"
+    private let activeCustomThemeIDStorageKey = "BitchBoy_ActiveCustomThemeID_v1"
     private let themeStorageKey = "BitchBoy_ChassisTheme_v2"
 
     // --- GITHUB RELEASES AUTO-UPDATER STATE ---
-    @Published var isCheckingForUpdates: Bool = false
-    @Published var updateAvailable: Bool = false
-    @Published var latestRelease: GitHubReleaseInfo? = nil
-    @Published var showUpdateModal: Bool = false
-    @Published var isDownloadingUpdate: Bool = false
-    @Published var updateDownloadProgress: Double = 0.0
-    @Published var updateStatusMessage: String = ""
-    @Published var updateError: String? = nil
-    @Published var lastUpdateCheckDate: Date? = nil
-    @Published var showUpToDateNotice: Bool = false
-    @Published var updateCheckResultNotice: String = ""
-    private var periodicUpdateCheckTimer: AnyCancellable?
-    private var activeDownloadTask: URLSessionDownloadTask?
+    var isCheckingForUpdates: Bool = false
+    var updateAvailable: Bool = false
+    var latestRelease: GitHubReleaseInfo? = nil
+    var showUpdateModal: Bool = false
+    var isDownloadingUpdate: Bool = false
+    var updateDownloadProgress: Double = 0.0
+    var updateStatusMessage: String = ""
+    var updateError: String? = nil
+    var lastUpdateCheckDate: Date? = nil
+    var showUpToDateNotice: Bool = false
+    var updateCheckResultNotice: String = ""
+    @ObservationIgnored private var periodicUpdateCheckTimer: AnyCancellable?
+    @ObservationIgnored private var activeDownloadTask: URLSessionDownloadTask?
 
     var currentAppVersion: String {
         let bundleVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         if !bundleVer.isEmpty && bundleVer != "1.0" && bundleVer != "1.0.0" {
             return bundleVer
         }
-        return "2.0.0"
+        return "3.0.0"
     }
 
     private let storageKey = "BitchBoy_SavedSlots_v5"
@@ -1961,6 +2594,10 @@ final class BitchBoyEngine: ObservableObject {
     init() {
         self.controls = Self.buildDefault69Map()
         self.slots = Self.buildDefault8MemorySlots()
+        let savedFPS = UserDefaults.standard.integer(forKey: "BitchBoy_TargetFPS_v1")
+        self.targetFPS = (savedFPS == 60) ? 60 : 120
+        let savedMaxUndo = UserDefaults.standard.integer(forKey: "BitchBoy_MaxUndoSteps_v1")
+        self.maxUndoSteps = (savedMaxUndo >= 10 && savedMaxUndo <= 200) ? savedMaxUndo : 100
         loadFromDisk()
         loadCustomEffectsFromDisk()
         loadModuleOrderAndSoundSettings()
@@ -1972,6 +2609,15 @@ final class BitchBoyEngine: ObservableObject {
         startArtNetListener(port: artNetIncomingPort)
         startsACNListener(port: sacnIncomingPort)
         recordProtocolEvent(type: .sys, command: "PROTOCOL TERMINAL READY", details: "CoreMIDI + UDP :\(oscIncomingPort) Active", rawHex: "7F 00 00 01", channel: "SYSTEM")
+
+        // Guarantee any debounced slot write reaches disk before the process exits.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.persistSlotsNow()
+            }
+        }
 
         // Automatic GitHub Release Auto-Updater Check (runs 3s after boot, then every 4 hours)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
@@ -1988,7 +2634,7 @@ final class BitchBoyEngine: ObservableObject {
         [
             PresetSlot(name: "SLOT A // PERFORMANCE", controls: Self.buildDefault69Map(), iconName: "music.mic", accentVelocity: 78),
             PresetSlot(name: "SLOT B // DAW PRODUCTION", controls: Self.buildDefault69Map(), iconName: "slider.horizontal.3", accentVelocity: 87),
-            PresetSlot(name: "SLOT C // VISUALS & DMX", controls: Self.buildDefault69Map(), iconName: "sparkles", accentVelocity: 95),
+            PresetSlot(name: "SLOT C // VISUALS & DMX", controls: Self.buildDefault69Map(), iconName: "sparkles", accentVelocity: 57),
             PresetSlot(name: "SLOT D // STREAM DECK", controls: Self.buildDefault69Map(), iconName: "square.grid.3x3.fill", accentVelocity: 74),
             PresetSlot(name: "SLOT E // SYNTH LEAD", controls: Self.buildDefault69Map(), iconName: "pianokeys", accentVelocity: 41),
             PresetSlot(name: "SLOT F // DRUM RACK", controls: Self.buildDefault69Map(), iconName: "waveform.path.ecg", accentVelocity: 72),
@@ -2120,61 +2766,16 @@ final class BitchBoyEngine: ObservableObject {
     // CORE MIDI COMMUNICATIONS
     // ------------------------------------------------------------------------
     private func setupCoreMIDI() {
-        var status = MIDIClientCreateWithBlock("BitchBoyClient" as CFString, &midiClient) { [weak self] notifyPtr in
-            let msg = notifyPtr.pointee
-            switch msg.messageID {
-            case .msgSetupChanged, .msgObjectAdded, .msgObjectRemoved, .msgPropertyChanged:
-                Task { @MainActor [weak self] in
-                    self?.scanForBitchBoy()
-                }
-            default:
-                break
-            }
-        }
+        var status = MIDIClientCreateWithBlock("BitchBoyClient" as CFString, &midiClient, makeCoreMIDINotifyBlock(for: self))
         guard status == noErr else { return }
 
         status = MIDIInputPortCreateWithProtocol(
             midiClient,
             "BitchBoyInput" as CFString,
             ._1_0,
-            &inputPort
-        ) { [weak self] eventList, _ in
-            let packets = eventList.pointee
-            var curPacket = packets.packet
-            for _ in 0..<packets.numPackets {
-                let w0 = curPacket.words.0
-                let msgType = (w0 >> 28) & 0x0F
-                let statusByte = UInt8((w0 >> 16) & 0xFF)
-                let data1 = UInt8((w0 >> 8) & 0xFF)
-                let data2 = UInt8(w0 & 0xFF)
-
-                if msgType == 0x3 {
-                    // SysEx 7-bit UMP packet
-                    let byteCount = min(6, Int((w0 >> 16) & 0x0F))
-                    let w1 = curPacket.words.1
-                    let rawBytes: [UInt8] = [
-                        UInt8((w0 >> 8) & 0xFF),
-                        UInt8(w0 & 0xFF),
-                        UInt8((w1 >> 24) & 0xFF),
-                        UInt8((w1 >> 16) & 0xFF),
-                        UInt8((w1 >> 8) & 0xFF),
-                        UInt8(w1 & 0xFF)
-                    ]
-                    let slice = Array(rawBytes.prefix(byteCount))
-                    Task { @MainActor [weak self] in
-                        self?.handleIncomingSysExBytes(slice)
-                    }
-                } else if msgType == 0x2 || statusByte >= 0x80 {
-                    Task { @MainActor [weak self] in
-                        self?.handleMIDIMessage(status: statusByte, data1: data1, data2: data2)
-                    }
-                }
-
-                if packets.numPackets > 1 {
-                    curPacket = MIDIEventPacketNext(&curPacket).pointee
-                }
-            }
-        }
+            &inputPort,
+            makeCoreMIDIReceiveBlock(for: self)
+        )
 
         MIDIOutputPortCreate(midiClient, "BitchBoyOutput" as CFString, &outputPort)
         MIDISourceCreate(midiClient, "BitchBoy Virtual Out" as CFString, &virtualSourceEndpoint)
@@ -2183,36 +2784,9 @@ final class BitchBoyEngine: ObservableObject {
         status = MIDIDestinationCreateWithBlock(
             midiClient,
             "BitchBoy Virtual In" as CFString,
-            &virtualDestinationEndpoint
-        ) { [weak self] packetList, _ in
-            let packets = packetList.pointee
-            var curPacket = packets.packet
-            for _ in 0..<packets.numPackets {
-                let length = Int(curPacket.length)
-                if length >= 3 {
-                    withUnsafePointer(to: &curPacket.data) { dataPtr in
-                        dataPtr.withMemoryRebound(to: UInt8.self, capacity: length) { bytes in
-                            if bytes[0] == 0xF0 {
-                                let sysEx = Array(UnsafeBufferPointer(start: bytes, count: length))
-                                Task { @MainActor [weak self] in
-                                    self?.handleIncomingSysExBytes(sysEx)
-                                }
-                            } else {
-                                let statusByte = bytes[0]
-                                let data1 = bytes[1]
-                                let data2 = bytes[2]
-                                Task { @MainActor [weak self] in
-                                    self?.handleInboundExternalMIDI(status: statusByte, data1: data1, data2: data2)
-                                }
-                            }
-                        }
-                    }
-                }
-                if packets.numPackets > 1 {
-                    curPacket = MIDIPacketNext(&curPacket).pointee
-                }
-            }
-        }
+            &virtualDestinationEndpoint,
+            makeCoreMIDIVirtualInBlock(for: self)
+        )
 
         scanForBitchBoy()
     }
@@ -2235,7 +2809,7 @@ final class BitchBoyEngine: ObservableObject {
             }
         }
 
-        // 2. Discover all MIDI input sources & connect per selectedMidiInputDevice
+        // 2. Discover all MIDI input sources & connect per selectedMIDIInputDevice
         let srcCount = MIDIGetNumberOfSources()
         var discoveredSources: [String] = []
         for i in 0..<srcCount {
@@ -2255,12 +2829,12 @@ final class BitchBoyEngine: ObservableObject {
             }
 
             let shouldConnect: Bool
-            if selectedMidiInputDevice == "ALL" {
+            if selectedMIDIInputDevice == "ALL" {
                 shouldConnect = true
-            } else if selectedMidiInputDevice == "AUTO" {
+            } else if selectedMIDIInputDevice == "AUTO" {
                 shouldConnect = isBB
             } else {
-                shouldConnect = (sName == selectedMidiInputDevice) || isBB
+                shouldConnect = (sName == selectedMIDIInputDevice) || isBB
             }
 
             if shouldConnect {
@@ -2286,8 +2860,8 @@ final class BitchBoyEngine: ObservableObject {
         if availableOutputTargets != targets {
             availableOutputTargets = targets
         }
-        if prevEmpty {
-            // Auto-select any non-BitchBoy external DAW / IAC / Synth targets on first launch
+        if selectedOutputNames.isEmpty || prevEmpty {
+            // Auto-select any non-BitchBoy external DAW / IAC / Synth targets on first launch or when targets appear
             for t in targets where !t.isHardwareBitchBoy {
                 selectedOutputNames.insert(t.name)
             }
@@ -2308,6 +2882,7 @@ final class BitchBoyEngine: ObservableObject {
         } else if !isConnected && wasConnected {
             showConnectionBanner = false
             SoundEffect.hardwareDisconnected.play(with: soundPack)
+            postVoiceOverAnnouncement("BitchBoy Hardware Disconnected")
             log("⚠️ BitchBoy Hardware Disconnected")
         }
     }
@@ -2405,11 +2980,13 @@ final class BitchBoyEngine: ObservableObject {
             ? "PLAYING ON-CONNECT FX: \(connectCustomFXName)"
             : "69-CONTROL HARDWARE MATRIX SYNCHRONIZED"
 
+        postVoiceOverAnnouncement("\(titleName) Connected and Ready")
+
         withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
             showConnectionBanner = true
             mascotSpeech = "🔌 BITCHBOY CONTROLLER ONLINE & READY!"
             mascotSpeechVisible = true
-            mascotScale = 1.18
+            mascotScale = 1.1
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
@@ -2593,7 +3170,27 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     // TRANSMIT MIDI & LED HARDWARE
     // ------------------------------------------------------------------------
+    private func sendMIDIPacket(endpoint: MIDIEndpointRef, data: [UInt8], isVirtualSource: Bool = false) {
+        guard endpoint != 0, !data.isEmpty else { return }
+        let bufSize = max(1024, data.count + 256)
+        var buffer = [UInt8](repeating: 0, count: bufSize)
+        buffer.withUnsafeMutableBytes { rawBuf in
+            guard let pktListPtr = rawBuf.baseAddress?.assumingMemoryBound(to: MIDIPacketList.self) else { return }
+            let curPacket = MIDIPacketListInit(pktListPtr)
+            var bytes = data
+            _ = MIDIPacketListAdd(pktListPtr, bufSize, curPacket, 0, bytes.count, &bytes)
+            if isVirtualSource {
+                MIDIReceived(endpoint, pktListPtr)
+            } else {
+                MIDISend(outputPort, endpoint, pktListPtr)
+            }
+        }
+    }
+
     func sendNoteOn(note: UInt8, velocity: UInt8) {
+        if velocity > 0, let idx = controlIndex(forNote: note), !isSectionEnabled(for: idx) {
+            return
+        }
         recordProtocolEvent(
             type: .midiOut,
             command: "NOTE ON #\(note) (\(midiNoteName(note)))",
@@ -2602,42 +3199,49 @@ final class BitchBoyEngine: ObservableObject {
             channel: "Ch:1"
         )
         guard isConnected, bitchBoyDestination != 0 else { return }
-        var packetList = MIDIPacketList()
-        var curPacket = MIDIPacketListInit(&packetList)
-        let data: [UInt8] = [0x90, note, velocity]
-        curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, 3, data)
         if velocity == 0 {
-            let noteOff: [UInt8] = [0x80, note, 0]
-            curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, 3, noteOff)
+            sendMIDIPacket(endpoint: bitchBoyDestination, data: [0x80, note, 0])
+        } else {
+            sendMIDIPacket(endpoint: bitchBoyDestination, data: [0x90, note, velocity])
         }
-        MIDISend(outputPort, bitchBoyDestination, &packetList)
     }
 
     func sendCC(cc: UInt8, value: UInt8) {
-        recordProtocolEvent(
-            type: .midiOut,
-            command: "CC #\(cc)",
-            details: "Value: \(value)",
-            rawHex: String(format: "B0 %02X %02X", cc, value),
-            channel: "Ch:1"
-        )
+        if let idx = controlIndex(forCC: cc) {
+            guard isSectionEnabled(for: idx) else { return }
+        }
+        let now = Date()
+        if now.timeIntervalSince(lastProtocolEventLogTime) >= 0.08 {
+            lastProtocolEventLogTime = now
+            recordProtocolEvent(
+                type: .midiOut,
+                command: "CC #\(cc)",
+                details: "Value: \(value)",
+                rawHex: String(format: "B0 %02X %02X", cc, value),
+                channel: "Ch:1"
+            )
+        }
         guard isConnected, bitchBoyDestination != 0 else { return }
-        var packetList = MIDIPacketList()
-        var curPacket = MIDIPacketListInit(&packetList)
-        var data: [UInt8] = [0xB0, cc, value]
-        curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, 3, &data)
-        MIDISend(outputPort, bitchBoyDestination, &packetList)
+        sendMIDIPacket(endpoint: bitchBoyDestination, data: [0xB0, cc, value])
     }
 
     // High-performance batch NoteOn sender for zero-lag keyboard effects
     func sendBatchNoteOn(notesAndVelocities: [(note: UInt8, velocity: UInt8)]) {
         guard isConnected, bitchBoyDestination != 0, !notesAndVelocities.isEmpty else { return }
+        let filteredNotesAndVelocities = notesAndVelocities.filter { item in
+            if item.velocity == 0 { return true }
+            if let idx = controlIndex(forNote: item.note) {
+                return isSectionEnabled(for: idx)
+            }
+            return true
+        }
+        guard !filteredNotesAndVelocities.isEmpty else { return }
         var buffer = [UInt8](repeating: 0, count: 2048)
         buffer.withUnsafeMutableBytes { rawBuf in
             guard let pktListPtr = rawBuf.baseAddress?.assumingMemoryBound(to: MIDIPacketList.self) else { return }
             var curPacket = MIDIPacketListInit(pktListPtr)
-            for item in notesAndVelocities {
-                var data: [UInt8] = [0x90, item.note, item.velocity]
+            for item in filteredNotesAndVelocities {
+                var data: [UInt8] = (item.velocity == 0) ? [0x80, item.note, 0] : [0x90, item.note, item.velocity]
                 curPacket = MIDIPacketListAdd(pktListPtr, 2048, curPacket, 0, 3, &data)
             }
             MIDISend(outputPort, bitchBoyDestination, pktListPtr)
@@ -2666,27 +3270,18 @@ final class BitchBoyEngine: ObservableObject {
 
         // 1. Send to physical BitchBoy hardware
         if isConnected, bitchBoyDestination != 0 {
-            var packetList = MIDIPacketList()
-            var curPacket = MIDIPacketListInit(&packetList)
-            curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, bytes.count, &bytes)
-            MIDISend(outputPort, bitchBoyDestination, &packetList)
+            sendMIDIPacket(endpoint: bitchBoyDestination, data: bytes)
         }
 
         // 2. Send to virtual source endpoint so QLab / DAWs receive it
         if virtualOutEnabled, virtualSourceEndpoint != 0 {
-            var packetList = MIDIPacketList()
-            var curPacket = MIDIPacketListInit(&packetList)
-            curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, bytes.count, &bytes)
-            MIDIReceived(virtualSourceEndpoint, &packetList)
+            sendMIDIPacket(endpoint: virtualSourceEndpoint, data: bytes, isVirtualSource: true)
         }
 
         // 3. Send to all selected external MIDI outputs in MIDI Router
         for target in availableOutputTargets where selectedOutputNames.contains(target.name) {
             if target.endpoint == bitchBoyDestination { continue }
-            var packetList = MIDIPacketList()
-            var curPacket = MIDIPacketListInit(&packetList)
-            curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, bytes.count, &bytes)
-            MIDISend(outputPort, target.endpoint, &packetList)
+            sendMIDIPacket(endpoint: target.endpoint, data: bytes)
         }
 
         let msg = MSCMessage(
@@ -2829,21 +3424,8 @@ final class BitchBoyEngine: ObservableObject {
         )
         let packet = ArtNetPacketBuilder.buildDMXPacket(universe: universe, channels: channels, sequence: artNetSequence)
         artNetSequence = (artNetSequence &+ 1)
-        guard let nwPort = NWEndpoint.Port(rawValue: artNetPort) else { return }
-        let conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .udp)
-        conn.start(queue: .global())
-        let targetPort = artNetPort
-        conn.send(content: packet, completion: .contentProcessed { [weak self] err in
-            conn.cancel()
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                if let err = err {
-                    self.log("❌ Art-Net send error: \(err.localizedDescription)")
-                } else {
-                    self.log("💡 Art-Net DMX -> \(host):\(targetPort) Univ:\(universe) (512 Ch)")
-                }
-            }
-        })
+        sendUDP(packet, host: host, port: artNetPort, protocolName: "Art-Net")
+        log("💡 Art-Net DMX -> \(host):\(artNetPort) Univ:\(universe) (512 Ch)")
     }
 
     func sendArtNetFullRig() {
@@ -2869,7 +3451,7 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     // SHOW CONTROL: ANSI E1.31 sACN TRANSMITTER (UDP Port 5568)
     // ------------------------------------------------------------------------
-    func sendsACNDMX(
+    func sendSACNDMX(
         host: String = "",
         universe: UInt16 = 1,
         priority: UInt8 = 100,
@@ -2894,31 +3476,56 @@ final class BitchBoyEngine: ObservableObject {
             targetHost = trimmed
         }
 
-        guard let nwPort = NWEndpoint.Port(rawValue: sacnPort) else { return }
-        let conn = NWConnection(host: NWEndpoint.Host(targetHost), port: nwPort, using: .udp)
-        conn.start(queue: .global())
-        let currentSacnPort = sacnPort
-        conn.send(content: packet, completion: .contentProcessed { [weak self] err in
-            conn.cancel()
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                if let err = err {
-                    self.log("❌ sACN send error: \(err.localizedDescription)")
-                } else {
-                    self.log("🌟 sACN E1.31 -> \(targetHost):\(currentSacnPort) Univ:\(universe) Pri:\(priority) (512 Ch)")
-                }
-            }
-        })
+        recordProtocolEvent(
+            type: .dmx,
+            command: "sACN E1.31 DMX DUMP",
+            details: "Univ: \(universe) | Pri: \(priority) | \(channels.count) Chans",
+            rawHex: "41 53 43 2D 45 31 2E 31 37",
+            channel: "\(targetHost):\(sacnPort)"
+        )
+
+        sendUDP(packet, host: targetHost, port: sacnPort, protocolName: "sACN")
+        log("🌟 sACN E1.31 -> \(targetHost):\(sacnPort) Univ:\(universe) Pri:\(priority) (512 Ch)")
     }
 
-    func sendsACNFullRig() {
+    @inlinable
+    func sendsACNDMX(
+        host: String = "",
+        universe: UInt16 = 1,
+        priority: UInt8 = 100,
+        channels: [UInt8]
+    ) {
+        sendSACNDMX(host: host, universe: universe, priority: priority, channels: channels)
+    }
+
+    func sendSACNFullRig() {
         let chs = Array(repeating: UInt8(255), count: 512)
-        sendsACNDMX(host: sacnHost, universe: sacnUniverse, priority: sacnPriority, channels: chs)
+        sendSACNDMX(host: sacnHost, universe: sacnUniverse, priority: sacnPriority, channels: chs)
     }
 
-    func sendsACNBlackout() {
+    @inlinable
+    func sendsACNFullRig() {
+        sendSACNFullRig()
+    }
+
+    func sendSACNBlackout() {
         let chs = Array(repeating: UInt8(0), count: 512)
-        sendsACNDMX(host: sacnHost, universe: sacnUniverse, priority: sacnPriority, channels: chs)
+        sendSACNDMX(host: sacnHost, universe: sacnUniverse, priority: sacnPriority, channels: chs)
+    }
+
+    @inlinable
+    func sendsACNBlackout() {
+        sendSACNBlackout()
+    }
+
+    func sendSACNRGBChase() {
+        var chs = Array(repeating: UInt8(0), count: 512)
+        for i in 0..<16 {
+            chs[i * 3] = 255     // Red
+            chs[i * 3 + 1] = 128 // Green
+            chs[i * 3 + 2] = 0   // Blue
+        }
+        sendSACNDMX(host: sacnHost, universe: sacnUniverse, priority: sacnPriority, channels: chs)
     }
 
     // ------------------------------------------------------------------------
@@ -2931,22 +3538,67 @@ final class BitchBoyEngine: ObservableObject {
         argType: String,
         argValue: String
     ) {
+        let valStr = argType == "NONE" ? "" : " [\(argType): \(argValue)]"
+        let hexSample = address.data(using: .utf8)?.prefix(8).map { String(format: "%02X", $0) }.joined(separator: " ") ?? ""
+        recordProtocolEvent(
+            type: .oscOut,
+            command: address,
+            details: "Target: \(host):\(port)\(valStr)",
+            rawHex: hexSample,
+            channel: "\(host):\(port)"
+        )
+
         let packet = OSCPacketBuilder.buildMessage(address: address, argType: argType, argValue: argValue)
+        sendUDP(packet, host: host, port: port, protocolName: "OSC")
+        log("📡 OSC UDP -> \(host):\(port) \(address)\(valStr)")
+    }
+
+    // MARK: - Pooled UDP Transmit
+    // Opening a fresh NWConnection per packet costs a socket + path evaluation every time and,
+    // during fader moves or DMX streaming, produced hundreds of short-lived connections per second.
+    // Connections are now cached per host:port on a dedicated queue and evicted when they fail.
+    @ObservationIgnored private var udpConnections: [String: NWConnection] = [:]
+    @ObservationIgnored private let udpTransmitQueue = DispatchQueue(label: "com.bitchmanager.udp-transmit", qos: .userInitiated)
+
+    private func sendUDP(_ packet: Data, host: String, port: UInt16, protocolName: String) {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
-        let conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .udp)
-        conn.start(queue: .global())
-        conn.send(content: packet, completion: .contentProcessed { [weak self] err in
-            conn.cancel()
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                if let err = err {
-                    self.log("❌ OSC send error: \(err.localizedDescription)")
-                } else {
-                    let valStr = argType == "NONE" ? "" : " [\(argType): \(argValue)]"
-                    self.log("📡 OSC UDP -> \(host):\(port) \(address)\(valStr)")
+        let key = "\(host):\(port)"
+        let conn: NWConnection
+        if let existing = udpConnections[key] {
+            conn = existing
+        } else {
+            conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .udp)
+            conn.stateUpdateHandler = { [weak self, weak conn] state in
+                switch state {
+                case .failed, .cancelled:
+                    Task { @MainActor [weak self] in
+                        guard let self, let conn, self.udpConnections[key] === conn else { return }
+                        self.udpConnections[key] = nil
+                    }
+                default:
+                    break
                 }
             }
+            conn.start(queue: udpTransmitQueue)
+            udpConnections[key] = conn
+        }
+        conn.send(content: packet, completion: .contentProcessed { [weak self] err in
+            guard let err else { return }
+            conn.cancel()
+            Task { @MainActor [weak self] in
+                self?.log("❌ \(protocolName) send error: \(err.localizedDescription)")
+            }
         })
+    }
+
+    func sendCustomOSC(
+        host: String,
+        port: UInt16,
+        address: String,
+        argType: OSCArgumentType,
+        argValue: String = ""
+    ) {
+        sendCustomOSC(host: host, port: port, address: address, argType: argType.rawValue, argValue: argValue)
     }
 
     // ------------------------------------------------------------------------
@@ -2954,21 +3606,8 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     func filteredControlIndices() -> [Int] {
         var indices = Array(0..<controls.count)
-        switch midiToOSCFilter {
-        case "GRID":
-            indices = indices.filter { $0 < 32 }
-        case "STRIP":
-            indices = indices.filter { $0 >= 32 && $0 < 40 }
-        case "PAD":
-            indices = indices.filter { $0 >= 40 && $0 < 49 }
-        case "VFADERS":
-            indices = indices.filter { $0 >= 49 && $0 < 57 }
-        case "HFADERS":
-            indices = indices.filter { $0 >= 57 && $0 < 61 }
-        case "MASTER_KNOBS":
-            indices = indices.filter { $0 >= 61 }
-        default:
-            break
+        if let sec = HardwareSection(rawValue: midiToOSCFilter) {
+            indices = indices.filter { sec.indexRange.contains($0) }
         }
         let query = midiToOSCSearchText.trimmingCharacters(in: .whitespaces).lowercased()
         if !query.isEmpty {
@@ -2985,7 +3624,7 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func sendOSCForControl(index: Int, isPress: Bool = true, liveVal: UInt8? = nil) {
-        guard midiToOSCMappingActive, index >= 0, index < controls.count else { return }
+        guard midiToOSCMappingActive, index >= 0, index < controls.count, isSectionEnabled(for: index) else { return }
         let item = controls[index]
         guard item.oscEnabled || item.actionType == .osc else { return }
 
@@ -3244,7 +3883,7 @@ final class BitchBoyEngine: ObservableObject {
     func panicBlackoutAll() {
         isBlackoutActive = true
         sendArtNetBlackout()
-        sendsACNBlackout()
+        sendSACNBlackout()
         sendMSCBroadcast(command: .allOff, cue: "", deviceID: 127)
         sendCustomOSC(host: customOSCHost, port: customOSCPort, address: "/panic", argType: "NONE", argValue: "")
         sendPanicAllNotesOffToOutputs()
@@ -3259,7 +3898,7 @@ final class BitchBoyEngine: ObservableObject {
             panicBlackoutAll()
         } else {
             sendArtNetFullRig()
-            sendsACNFullRig()
+            sendSACNFullRig()
             SoundEffect.presetSwitch.play(with: soundPack)
             log("💡 Blackout Disengaged — Restored Rig Levels")
         }
@@ -3270,14 +3909,14 @@ final class BitchBoyEngine: ObservableObject {
         let savedGM = grandMasterLevel
         grandMasterLevel = 1.0
         sendArtNetFullRig()
-        sendsACNFullRig()
+        sendSACNFullRig()
         setZoneLEDs(range: 0..<49, velocity: 3)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
             self.grandMasterLevel = savedGM
             if self.isBlackoutActive {
                 self.sendArtNetBlackout()
-                self.sendsACNBlackout()
+                self.sendSACNBlackout()
                 self.setZoneLEDs(range: 0..<49, velocity: 0)
             } else {
                 self.sendArtNetFullRig()
@@ -3291,7 +3930,7 @@ final class BitchBoyEngine: ObservableObject {
             let baseVal = Double(controls[49 + i].liveValue) * 2.0
             artNetChannels[i] = UInt8(max(0.0, min(255.0, baseVal * grandMasterLevel)))
         }
-        sendArtNetDMX(host: artNetHost, universe: artNetUniverse, channels: artNetChannels)
+        sendThrottledArtNetFaderMirror()
     }
 
     // ------------------------------------------------------------------------
@@ -3303,10 +3942,9 @@ final class BitchBoyEngine: ObservableObject {
         let isNoteOff = (msgType == 0x80) || ((msgType == 0x90) && (data2 == 0))
         let isCC = (msgType == 0xB0)
 
-        guard let idx = controls.firstIndex(where: {
-            if isCC { return ($0.kind == .vfader || $0.kind == .hfader || $0.kind == .knob) && $0.number == data1 }
-            else { return $0.kind == .key && $0.number == data1 }
-        }) else { return }
+        guard let idx = (isCC ? controlIndex(forCC: data1) : (isNoteOn || isNoteOff ? controlIndex(forNote: data1) : nil)) else { return }
+
+        guard isSectionEnabled(for: idx) else { return }
 
         if isNoteOn {
             controls[idx].isPressed = true
@@ -3334,6 +3972,7 @@ final class BitchBoyEngine: ObservableObject {
     // INTERACTION & SIMULATION
     // ------------------------------------------------------------------------
     func handleKeyPressWithModifiers(index: Int, isShiftDown: Bool) {
+        guard index >= 0 && index < controls.count, isSectionEnabled(for: index) else { return }
         if paintOnMainChassis && index < 49 {
             paintCustomFXKey(keyIndex: index, velocity: customBrushVelocity)
             selectedIndex = index
@@ -3354,7 +3993,7 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func simulateKeyPress(at index: Int) {
-        guard index < controls.count else { return }
+        guard index < controls.count, isSectionEnabled(for: index) else { return }
         selectedIndex = index
         if !selectedIndices.contains(index) {
             selectedIndices.insert(index)
@@ -3427,7 +4066,7 @@ final class BitchBoyEngine: ObservableObject {
         guard keyIndex >= 0 && keyIndex < 49, reactiveKeyFXMode != .off else { return }
         lastReactiveOriginKey = keyIndex
         let pos = BitchBoyKeyMap.keyPositions[keyIndex]
-        let palette: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let palette: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
         let chosenVel: UInt8 = reactiveFXRainbowColor
             ? palette[(keyIndex * 3 + activeReactivePulses.count * 2) % palette.count]
             : reactiveFXColorVelocity
@@ -3463,8 +4102,10 @@ final class BitchBoyEngine: ObservableObject {
     private func startReactiveTimerIfNeeded() {
         guard reactiveFXTimer == nil else { return }
         lastSentReactiveLEDs = Array(repeating: 255, count: 49)
+        lastFrameTimestamp = CACurrentMediaTime()
+        let intervalMicros = targetFPS == 120 ? 8333 : 16666
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
-        timer.schedule(deadline: .now() + .milliseconds(33), repeating: .milliseconds(33), leeway: .milliseconds(2))
+        timer.schedule(deadline: .now() + .microseconds(intervalMicros), repeating: .microseconds(intervalMicros), leeway: .microseconds(250))
         timer.setEventHandler { [weak self] in
             self?.stepReactiveKeyFX()
         }
@@ -3496,7 +4137,20 @@ final class BitchBoyEngine: ObservableObject {
             return
         }
 
-        let dt = 0.033 * max(0.3, reactiveFXSpeed)
+        let now = CACurrentMediaTime()
+        let elapsed = lastFrameTimestamp > 0 ? (now - lastFrameTimestamp) : (1.0 / Double(targetFPS))
+        lastFrameTimestamp = now
+        let dt = min(0.04, elapsed) * max(0.3, reactiveFXSpeed)
+
+        frameCountSinceLastMeasure += 1
+        if now - lastFPSMeasureTimestamp >= 0.5 {
+            let mElapsed = now - lastFPSMeasureTimestamp
+            measuredFPS = Double(frameCountSinceLastMeasure) / mElapsed
+            frameLatencyMs = (1.0 / max(1.0, measuredFPS)) * 1000.0
+            frameCountSinceLastMeasure = 0
+            lastFPSMeasureTimestamp = now
+        }
+
         for i in activeReactivePulses.indices {
             activeReactivePulses[i].age += dt
         }
@@ -3506,13 +4160,14 @@ final class BitchBoyEngine: ObservableObject {
             reactiveWaveCount = activeReactivePulses.count
         }
 
-        let palette: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let palette: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
 
         var batch = controls
         var didChangeUI = false
         var hardwareNotes: [(keyIndex: Int, note: UInt8, velocity: UInt8, delta: Int)] = []
 
         for k in 0..<49 {
+            guard isSectionEnabled(for: k) else { continue }
             let baseVel: UInt8
             if batch[k].isPressed {
                 baseVel = batch[k].activeVelocity
@@ -3612,7 +4267,8 @@ final class BitchBoyEngine: ObservableObject {
             controls = batch
         }
 
-        if !hardwareNotes.isEmpty && isConnected && bitchBoyDestination != 0 {
+        if !hardwareNotes.isEmpty && isConnected && bitchBoyDestination != 0 && (now - lastHardwareMIDISendTime >= 0.016) {
+            lastHardwareMIDISendTime = now
             if hardwareNotes.count > 16 {
                 hardwareNotes.sort { $0.delta > $1.delta }
                 hardwareNotes = Array(hardwareNotes.prefix(16))
@@ -3631,6 +4287,7 @@ final class BitchBoyEngine: ObservableObject {
             }
             var restoreNotes: [(note: UInt8, velocity: UInt8)] = []
             for k in 0..<49 {
+                guard isSectionEnabled(for: k) else { continue }
                 let v = controls[k].currentLED
                 if lastSentReactiveLEDs[k] != v {
                     lastSentReactiveLEDs[k] = v
@@ -3643,19 +4300,76 @@ final class BitchBoyEngine: ObservableObject {
         }
     }
 
+    @ObservationIgnored private var lastFaderSlideSoundTime: Date = Date.distantPast
+
     func setControlLiveValue(index: Int, value: UInt8) {
-        guard index < controls.count else { return }
-        selectedIndex = index
-        controls[index].liveValue = value
-        sendCC(cc: controls[index].number, value: value)
-        if forwardUIInteractions {
-            routeIncomingMIDIToTargets(status: 0xB0, data1: controls[index].number, data2: value, isFromHardware: false)
+        guard index < controls.count, isSectionEnabled(for: index) else { return }
+        if controls[index].liveValue == value && selectedIndex == index {
+            return
         }
-        sendOSCForControl(index: index, isPress: true, liveVal: value)
-        lastStreamMessage = "[\(controls[index].label)] CC #\(controls[index].number) VAL: \(value)"
-        SoundEffect.faderSlide.play(with: soundPack)
+        recordUndoSnapshot(actionName: "Move \(controls[index].label)", debounceSeconds: 0.8)
+        if selectedIndex != index {
+            selectedIndex = index
+        }
+        controls[index].liveValue = value
+
+        // Determine if hardware MIDI output is enabled for this section
+        let canSendCC: Bool = {
+            guard hardwareMIDISendEnabled else { return false }
+            if index >= 49 && index < 57 { return verticalFadersMIDISendEnabled }
+            if index >= 57 && index < 61 { return horizontalFadersMIDISendEnabled }
+            if index >= 61 && index < 69 { return rotaryKnobsMIDISendEnabled }
+            return true
+        }()
+
+        if canSendCC {
+            sendCC(cc: controls[index].number, value: value)
+            if forwardUIInteractions {
+                routeIncomingMIDIToTargets(status: 0xB0, data1: controls[index].number, data2: value, isFromHardware: false)
+            }
+        }
+
+        if oscSendEnabled {
+            sendOSCForControl(index: index, isPress: true, liveVal: value)
+        }
+
+        let now = Date()
+        if now.timeIntervalSince(lastStreamMessageUpdateTime) >= 0.08 {
+            lastStreamMessageUpdateTime = now
+            lastStreamMessage = "[\(controls[index].label)] CC #\(controls[index].number) VAL: \(value)"
+        }
+
+        if now.timeIntervalSince(lastFaderSlideSoundTime) >= 0.08 && uiClickSoundEnabled {
+            lastFaderSlideSoundTime = now
+            SoundEffect.faderSlide.play(with: soundPack)
+        }
         if currentFXMode == .vuMeter && index >= 49 && index < 57 {
             updateVUMeterFaders()
+        }
+    }
+
+    func batchUpdateLEDs(_ updates: [(index: Int, velocity: UInt8)]) {
+        guard !updates.isEmpty else { return }
+        var didChangeUI = false
+        var batch = controls
+        var midiNotes: [(note: UInt8, velocity: UInt8)] = []
+
+        for (idx, vel) in updates {
+            guard idx < batch.count else { continue }
+            let targetVel: UInt8 = isSectionEnabled(for: idx) ? vel : 0
+            if batch[idx].currentLED != targetVel {
+                batch[idx].currentLED = targetVel
+                didChangeUI = true
+                midiNotes.append((note: batch[idx].number, velocity: targetVel))
+            }
+        }
+
+        if didChangeUI {
+            controls = batch
+        }
+
+        if !midiNotes.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: midiNotes)
         }
     }
 
@@ -3730,9 +4444,21 @@ final class BitchBoyEngine: ObservableObject {
     func restorePresetLEDs() {
         var batchNotes: [(note: UInt8, velocity: UInt8)] = []
         for i in 0..<49 {
-            let vel = controls[i].idleVelocity
-            controls[i].currentLED = vel
-            batchNotes.append((note: controls[i].number, velocity: vel))
+            let targetVel: UInt8
+            if !isSectionEnabled(for: i) {
+                targetVel = 0
+            } else {
+                switch controls[i].feedbackMode {
+                case .toggle:
+                    targetVel = controls[i].toggleLatched ? controls[i].activeVelocity : controls[i].idleVelocity
+                case .disabled:
+                    targetVel = 0
+                default:
+                    targetVel = controls[i].idleVelocity
+                }
+            }
+            controls[i].currentLED = targetVel
+            batchNotes.append((note: controls[i].number, velocity: targetVel))
         }
         sendBatchNoteOn(notesAndVelocities: batchNotes)
     }
@@ -3752,22 +4478,21 @@ final class BitchBoyEngine: ObservableObject {
         log("✨ Sweeping Rainbow Wave Hardware LED Refresh...")
 
         Task { @MainActor in
-            let rainbowVelocities: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+            let rainbowVelocities: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
             let totalSteps = 22
             for step in 0..<totalSteps {
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = BitchBoyKeyMap.keyPositions[k].col
                     let wavePos = step - col
                     if wavePos >= 0 && wavePos < rainbowVelocities.count {
-                        let vel = rainbowVelocities[wavePos]
-                        self.controls[k].currentLED = vel
-                        self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                        updates.append((k, rainbowVelocities[wavePos]))
                     } else if wavePos >= rainbowVelocities.count {
-                        let vel = self.controls[k].idleVelocity
-                        self.controls[k].currentLED = vel
-                        self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                        updates.append((k, self.controls[k].idleVelocity))
                     }
                 }
+                self.batchUpdateLEDs(updates)
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
             if self.currentFXMode == .staticFX {
@@ -3780,7 +4505,7 @@ final class BitchBoyEngine: ObservableObject {
 
     // 2. Continuous 11-Column Rainbow Wave (Loops forever until stopped)
     private func startContinuousRainbowFX() {
-        let rainbowVelocities: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let rainbowVelocities: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
         var step = 0
         let interval = 0.07 / max(0.2, fxSpeed)
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
@@ -3788,12 +4513,14 @@ final class BitchBoyEngine: ObservableObject {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 step += 1
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = BitchBoyKeyMap.keyPositions[k].col
                     let vel = rainbowVelocities[(step + col) % rainbowVelocities.count]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -3807,13 +4534,15 @@ final class BitchBoyEngine: ObservableObject {
                 guard let self = self else { return }
                 step = (step + 1) % 20
                 let activeCol = step <= 10 ? step : (20 - step)
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = BitchBoyKeyMap.keyPositions[k].col
                     let dist = abs(col - activeCol)
                     let vel: UInt8 = dist == 0 ? 72 : (dist == 1 ? 61 : (dist == 2 ? 83 : 0))
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -3826,32 +4555,38 @@ final class BitchBoyEngine: ObservableObject {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 step += 1
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = BitchBoyKeyMap.keyPositions[k].col
                     let row = BitchBoyKeyMap.keyPositions[k].row
                     let dropRow = (step + col * 3) % 7
                     let vel: UInt8 = (row == dropRow) ? 3 : (row == (dropRow - 1 + 7) % 7 ? 87 : (row == (dropRow - 2 + 7) % 7 ? 33 : 0))
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
     // 5. Cyberpunk Pulse (Smooth breathing through neon velocities)
     private func startCyberPulseFX() {
         var phase: Double = 0
-        let interval = 0.04 / max(0.2, fxSpeed)
+        let baseInterval = 0.04 / max(0.2, fxSpeed)
+        let interval = max(1.0 / Double(targetFPS), baseInterval / (Double(targetFPS) / 25.0))
+        let phaseStep = 0.12 * (interval / baseInterval)
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                phase += 0.12
+                phase += phaseStep
                 let normalized = (sin(phase) + 1.0) * 0.5
                 let vel = UInt8(normalized * 115.0 + 12.0)
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -3869,6 +4604,8 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func updateVUMeterFaders(bgTick: Int = 0) {
+        var updates: [(index: Int, velocity: UInt8)] = []
+        updates.reserveCapacity(49)
         for col in 0..<8 {
             let faderVal = Double(controls[49 + col].liveValue)
             let colKeyIndices = [32 + col, 24 + col, 16 + col, 8 + col, 0 + col]
@@ -3878,19 +4615,14 @@ final class BitchBoyEngine: ObservableObject {
                 let kIdx = colKeyIndices[seg]
                 let isLit = faderVal >= thresholds[seg]
                 let vel: UInt8 = isLit ? colors[seg] : 0
-                if controls[kIdx].currentLED != vel {
-                    controls[kIdx].currentLED = vel
-                    sendNoteOn(note: controls[kIdx].number, velocity: vel)
-                }
+                updates.append((kIdx, vel))
             }
         }
         let padWave = UInt8(((sin(Double(bgTick) * 0.2) + 1.0) * 0.5) * 40.0 + 10.0)
         for p in 40..<49 {
-            if controls[p].currentLED != padWave {
-                controls[p].currentLED = padWave
-                sendNoteOn(note: controls[p].number, velocity: padWave)
-            }
+            updates.append((p, padWave))
         }
+        batchUpdateLEDs(updates)
     }
 
     // 7. Fire & Embers (Organic flame simulation with flickering coals)
@@ -3901,28 +4633,33 @@ final class BitchBoyEngine: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let row = BitchBoyKeyMap.keyPositions[k].row
                     let heatIdx = min(firePal.count - 1, max(0, (4 - row) + Int.random(in: -1...1)))
-                    let vel = firePal[heatIdx]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, firePal[heatIdx]))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
     // 8. Center Ripple (Concentric shockwaves expanding outward)
     private func startWaterRippleFX() {
         var phase: Double = 0
-        let interval = 0.05 / max(0.2, fxSpeed)
+        let baseInterval = 0.05 / max(0.2, fxSpeed)
+        let interval = max(1.0 / Double(targetFPS), baseInterval / (Double(targetFPS) / 20.0))
+        let phaseStep = 0.25 * (interval / baseInterval)
         let waterPal: [UInt8] = [0, 41, 33, 78, 3]
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                phase += 0.25
+                phase += phaseStep
                 let centerCol = 3.5
                 let centerRow = 2.0
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = Double(BitchBoyKeyMap.keyPositions[k].col)
                     let row = Double(BitchBoyKeyMap.keyPositions[k].row)
@@ -3931,9 +4668,9 @@ final class BitchBoyEngine: ObservableObject {
                     let norm = max(0.0, wave)
                     let pIdx = Int(norm * Double(waterPal.count - 1))
                     let vel = waterPal[min(waterPal.count - 1, max(0, pIdx))]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -3954,13 +4691,14 @@ final class BitchBoyEngine: ObservableObject {
                 }
                 for _ in 0..<Int.random(in: 2...4) {
                     let rIdx = Int.random(in: 0..<49)
-                    starBrightness[rIdx] = [3, 78, 33, 41, 74, 95].randomElement() ?? 3
+                    starBrightness[rIdx] = [3, 78, 33, 41, 74, 57].randomElement() ?? 3
                 }
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
-                    let vel = starBrightness[k]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, starBrightness[k]))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -3974,10 +4712,12 @@ final class BitchBoyEngine: ObservableObject {
                 guard let self = self else { return }
                 count += 1
                 let vel: UInt8 = (count % 3 == 0) ? 3 : 0
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -4000,23 +4740,29 @@ final class BitchBoyEngine: ObservableObject {
                 case 6: vel = 83 // (Brown/dim)
                 default: vel = 0 // Pause
                 }
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
     // 12. Plasma Field (Trigonometric 2D undulating field)
     private func startPlasmaWaveFX() {
         var t: Double = 0
-        let interval = 0.06 / max(0.2, fxSpeed)
-        let plasmaPal: [UInt8] = [41, 67, 95, 78, 33, 87, 74, 61, 72]
+        let baseInterval = 0.06 / max(0.2, fxSpeed)
+        let interval = max(1.0 / Double(targetFPS), baseInterval / (Double(targetFPS) / 16.0))
+        let tStep = 0.16 * (interval / baseInterval)
+        let plasmaPal: [UInt8] = [41, 67, 57, 78, 33, 87, 74, 61, 72]
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                t += 0.16
+                t += tStep
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let c = Double(BitchBoyKeyMap.keyPositions[k].col)
                     let r = Double(BitchBoyKeyMap.keyPositions[k].row)
@@ -4026,24 +4772,28 @@ final class BitchBoyEngine: ObservableObject {
                     let norm = (v1 + v2 + v3 + 3.0) / 6.0
                     let pIdx = Int(norm * Double(plasmaPal.count - 1))
                     let vel = plasmaPal[min(plasmaPal.count - 1, max(0, pIdx))]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
     // 13. Spiral Vortex (Rotating light beam around center)
     private func startSpiralVortexFX() {
         var angle: Double = 0
-        let interval = 0.06 / max(0.2, fxSpeed)
+        let baseInterval = 0.06 / max(0.2, fxSpeed)
+        let interval = max(1.0 / Double(targetFPS), baseInterval / (Double(targetFPS) / 16.0))
+        let angleStep = 0.32 * (interval / baseInterval)
         let vortexPal: [UInt8] = [0, 41, 67, 78, 33, 3]
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                angle += 0.32
+                angle += angleStep
                 let centerCol = 4.0
                 let centerRow = 2.0
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let dx = Double(BitchBoyKeyMap.keyPositions[k].col) - centerCol
                     let dy = Double(BitchBoyKeyMap.keyPositions[k].row) - centerRow
@@ -4052,9 +4802,9 @@ final class BitchBoyEngine: ObservableObject {
                     let norm = max(0.0, 1.0 - diff / (.pi * 2))
                     let pIdx = Int(norm * Double(vortexPal.count - 1))
                     let vel = vortexPal[min(vortexPal.count - 1, max(0, pIdx))]
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -4070,6 +4820,8 @@ final class BitchBoyEngine: ObservableObject {
                     let delta = Int.random(in: -2...2)
                     colHeights[c] = max(0, min(5, colHeights[c] + delta))
                 }
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let col = BitchBoyKeyMap.keyPositions[k].col
                     let row = BitchBoyKeyMap.keyPositions[k].row
@@ -4077,33 +4829,34 @@ final class BitchBoyEngine: ObservableObject {
                         let activeLevel = 4 - row
                         let isLit = activeLevel < colHeights[col]
                         let vel: UInt8 = isLit ? UInt8(40 + activeLevel * 20) : 0
-                        self.controls[k].currentLED = vel
-                        self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                        updates.append((k, vel))
                     } else {
                         let padVel = UInt8.random(in: 20...70)
-                        self.controls[k].currentLED = padVel
-                        self.sendNoteOn(note: self.controls[k].number, velocity: padVel)
+                        updates.append((k, padVel))
                     }
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
     // 15. Color Runner (Snake head chasing with fading tail)
     private func startColorChaseFX() {
         var head = 0
-        let trailColors: [UInt8] = [3, 78, 87, 74, 61, 72, 95]
+        let trailColors: [UInt8] = [3, 78, 87, 74, 61, 72, 57]
         let interval = 0.05 / max(0.2, fxSpeed)
         fxTimer = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 head = (head + 1) % 49
+                var updates: [(index: Int, velocity: UInt8)] = []
+                updates.reserveCapacity(49)
                 for k in 0..<49 {
                     let dist = (head - k + 49) % 49
                     let vel: UInt8 = dist < trailColors.count ? trailColors[dist] : 0
-                    self.controls[k].currentLED = vel
-                    self.sendNoteOn(note: self.controls[k].number, velocity: vel)
+                    updates.append((k, vel))
                 }
+                self.batchUpdateLEDs(updates)
             }
     }
 
@@ -4111,28 +4864,31 @@ final class BitchBoyEngine: ObservableObject {
     // MASCOT & ACTIONS
     // ------------------------------------------------------------------------
     func triggerMascotTap() {
-        mascotScale = 1.5
+        // Short pop that settles back to 1.0 so the mascot never outgrows its layout slot.
+        mascotScale = 1.1
         SoundEffect.mascotSqueak.play(with: soundPack)
         let quotes = [
-            "\"DON'T SQUEEZE THE BITCHBOY!\"",
-            "\"YOU BITCH!\"",
-            "\"MIDI PIPES ARE PURRING SMOOTH!\"",
-            "\"CRANK THAT FADER TO 127!\"",
-            "\"PRESS SHIFT FOR MULTI-SELECT!\"",
-            "\"BEEPS, BOOPS, AND HEAVY BASS!\"",
-            "\"TAYLOR FOSSEN APPROVED! 👑\"",
-            "\"STANDING BY\"",
-            "\"FART\"",
-            "\"MY FAVORITE WORD IS BITCH\"",
-            "\"NEON GLOW AT MAXIMUM WATTAGE!\""
+            "\"CORE TELEMETRY NOMINAL // 100%\"",
+            "\"ALL 69 HARDWARE CONTROLS LIVE\"",
+            "\"LOW LATENCY CORE AUDIO & MIDI ENGINE\"",
+            "\"CALIBRATED 12-BIT ADC STREAMING\"",
+            "\"HOLD SHIFT TO MULTI-SELECT CHANNELS\"",
+            "\"USB BUFFER HEALTH: 0 DROPPED FRAMES\"",
+            "\"TAYLOR FOSSEN ENGINEERING EDITION\"",
+            "\"HARDWARE CONTROLLER SYNCHRONIZED\"",
+            "\"DUAL USB-MIDI PIPELINE ONLINE\"",
+            "\"DSP MATRIX CALIBRATION COMPLETE\"",
+            "\"STUDIO MASTER ROUTING ENGAGED\""
         ]
         mascotSpeech = quotes.randomElement() ?? quotes[0]
         mascotSpeechVisible = true
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 850_000_000)
-            self.mascotScale = 1.5
-            try? await Task.sleep(nanoseconds: 5_500_000_000)
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                self.mascotScale = 1.0
+            }
+            try? await Task.sleep(nanoseconds: 6_170_000_000)
             withAnimation {
                 self.mascotSpeechVisible = false
             }
@@ -4204,6 +4960,10 @@ final class BitchBoyEngine: ObservableObject {
             log("❌ Invalid Preset JSON in Clipboard")
             return
         }
+        guard decoded.controls.count == 69 else {
+            log("❌ Incompatible Preset: Expected 69 controls, received \(decoded.controls.count)")
+            return
+        }
         slots[activeSlot] = decoded
         controls = decoded.controls
         saveCurrentSlot()
@@ -4224,10 +4984,10 @@ final class BitchBoyEngine: ObservableObject {
             oscIncomingHost = h
         }
         if let dev = UserDefaults.standard.string(forKey: midiDeviceStorageKey), !dev.isEmpty {
-            selectedMidiInputDevice = dev
+            selectedMIDIInputDevice = dev
         }
         if UserDefaults.standard.object(forKey: midiChannelStorageKey) != nil {
-            selectedMidiInputChannel = UserDefaults.standard.integer(forKey: midiChannelStorageKey)
+            selectedMIDIInputChannel = UserDefaults.standard.integer(forKey: midiChannelStorageKey)
         }
         if UserDefaults.standard.object(forKey: artNetPortStorageKey) != nil {
             let p = UserDefaults.standard.integer(forKey: artNetPortStorageKey)
@@ -4249,19 +5009,59 @@ final class BitchBoyEngine: ObservableObject {
         if UserDefaults.standard.object(forKey: sacnUnivStorageKey) != nil {
             sacnIncomingUniverse = UInt16(UserDefaults.standard.integer(forKey: sacnUnivStorageKey))
         }
+        if UserDefaults.standard.object(forKey: terminalFontSizeStorageKey) != nil {
+            let sz = UserDefaults.standard.double(forKey: terminalFontSizeStorageKey)
+            if sz >= 8.0 && sz <= 24.0 { terminalFontSize = CGFloat(sz) }
+        }
+        if UserDefaults.standard.object(forKey: "bb_hw_midi_send_enabled") != nil {
+            hardwareMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_hw_midi_send_enabled")
+        }
+        if UserDefaults.standard.object(forKey: "bb_hw_input_actions_enabled") != nil {
+            hardwareInputActionsEnabled = UserDefaults.standard.bool(forKey: "bb_hw_input_actions_enabled")
+        }
+        if UserDefaults.standard.object(forKey: "bb_hw_qwerty_enabled") != nil {
+            qwertyKeybindsEnabled = UserDefaults.standard.bool(forKey: "bb_hw_qwerty_enabled")
+        }
+        if UserDefaults.standard.object(forKey: "bb_keygrid_midi_send") != nil {
+            keyGridMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_keygrid_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_keystrip_midi_send") != nil {
+            keyStripMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_keystrip_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_keypad_midi_send") != nil {
+            keypadMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_keypad_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_vfaders_midi_send") != nil {
+            verticalFadersMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_vfaders_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_hfaders_midi_send") != nil {
+            horizontalFadersMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_hfaders_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_knobs_midi_send") != nil {
+            rotaryKnobsMIDISendEnabled = UserDefaults.standard.bool(forKey: "bb_knobs_midi_send")
+        }
+        if UserDefaults.standard.object(forKey: "bb_hw_led_sync_enabled") != nil {
+            hardwareLEDSyncEnabled = UserDefaults.standard.bool(forKey: "bb_hw_led_sync_enabled")
+        }
+        // Self-healing: If sections or master MIDI output are active, ensure inputs are not deadlocked
+        let anySectionActive = keyGridMIDISendEnabled || keyStripMIDISendEnabled || keypadMIDISendEnabled || verticalFadersMIDISendEnabled || horizontalFadersMIDISendEnabled || rotaryKnobsMIDISendEnabled
+        if hardwareMIDISendEnabled || anySectionActive {
+            hardwareInputActionsEnabled = true
+        }
     }
 
     func saveProtocolSettings() {
         UserDefaults.standard.set(Int(oscIncomingPort), forKey: oscPortStorageKey)
         UserDefaults.standard.set(oscIncomingHost, forKey: oscHostStorageKey)
-        UserDefaults.standard.set(selectedMidiInputDevice, forKey: midiDeviceStorageKey)
-        UserDefaults.standard.set(selectedMidiInputChannel, forKey: midiChannelStorageKey)
+        UserDefaults.standard.set(selectedMIDIInputDevice, forKey: midiDeviceStorageKey)
+        UserDefaults.standard.set(selectedMIDIInputChannel, forKey: midiChannelStorageKey)
         UserDefaults.standard.set(Int(artNetIncomingPort), forKey: artNetPortStorageKey)
         UserDefaults.standard.set(artNetIncomingHost, forKey: artNetHostStorageKey)
         UserDefaults.standard.set(Int(artNetIncomingUniverse), forKey: artNetUnivStorageKey)
         UserDefaults.standard.set(Int(sacnIncomingPort), forKey: sacnPortStorageKey)
         UserDefaults.standard.set(sacnIncomingHost, forKey: sacnHostStorageKey)
         UserDefaults.standard.set(Int(sacnIncomingUniverse), forKey: sacnUnivStorageKey)
+        UserDefaults.standard.set(Double(terminalFontSize), forKey: terminalFontSizeStorageKey)
     }
 
     func updateOSCReceiver(port: UInt16, host: String) {
@@ -4274,8 +5074,8 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func updateMIDIReceiver(device: String, channel: Int) {
-        selectedMidiInputDevice = device
-        selectedMidiInputChannel = channel
+        selectedMIDIInputDevice = device
+        selectedMIDIInputChannel = channel
         saveProtocolSettings()
         scanForBitchBoy()
         SoundEffect.keyTap.play(with: soundPack)
@@ -4316,19 +5116,17 @@ final class BitchBoyEngine: ObservableObject {
             guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
             let listener = try NWListener(using: params, on: nwPort)
             listener.newConnectionHandler = { [weak self] conn in
-                conn.start(queue: .global())
-                Task { @MainActor in
-                    self?.receiveOSCPacket(conn: conn)
-                }
+                conn.start(queue: .global(qos: .userInitiated))
+                self?.receiveOSCPacket(conn: conn)
             }
             listener.stateUpdateHandler = { [weak self] state in
                 DispatchQueue.main.async {
                     switch state {
                     case .ready:
-                        self?.isOscListenerActive = true
+                        self?.isOSCListenerActive = true
                         self?.recordProtocolEvent(type: .sys, command: "OSC UDP LISTENER ONLINE", details: "Listening on \(host):\(port)", rawHex: "")
                     case .failed(let err):
-                        self?.isOscListenerActive = false
+                        self?.isOSCListenerActive = false
                         self?.recordProtocolEvent(type: .sys, command: "OSC LISTENER FAILED", details: err.localizedDescription, rawHex: "")
                     default:
                         break
@@ -4352,10 +5150,8 @@ final class BitchBoyEngine: ObservableObject {
             guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
             let listener = try NWListener(using: params, on: nwPort)
             listener.newConnectionHandler = { [weak self] conn in
-                conn.start(queue: .global())
-                Task { @MainActor in
-                    self?.receiveArtNetPacket(conn: conn)
-                }
+                conn.start(queue: .global(qos: .userInitiated))
+                self?.receiveArtNetPacket(conn: conn)
             }
             listener.stateUpdateHandler = { [weak self] state in
                 DispatchQueue.main.async {
@@ -4378,13 +5174,17 @@ final class BitchBoyEngine: ObservableObject {
         }
     }
 
-    private func receiveArtNetPacket(conn: NWConnection) {
+    nonisolated private func receiveArtNetPacket(conn: NWConnection) {
         conn.receiveMessage { [weak self] data, _, _, error in
             if let data = data, data.count >= 18 {
-                self?.parseAndRecordIncomingArtNet(data: data, remote: "\(conn.endpoint)")
+                Task { @MainActor [weak self] in
+                    self?.parseAndRecordIncomingArtNet(data: data, remote: "\(conn.endpoint)")
+                }
             }
             if error == nil {
                 self?.receiveArtNetPacket(conn: conn)
+            } else {
+                conn.cancel()
             }
         }
     }
@@ -4402,15 +5202,13 @@ final class BitchBoyEngine: ObservableObject {
             let dmxData = data.subdata(in: 18..<min(18 + length, data.count))
             let firstChans = dmxData.prefix(6).map { String($0) }.joined(separator: ", ")
             let hex = data.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " ")
-            DispatchQueue.main.async {
-                self.recordProtocolEvent(
-                    type: .dmx,
-                    command: "ART-NET DMX RX (Univ \(universe))",
-                    details: "\(length) Chans [\(firstChans)...]",
-                    rawHex: hex,
-                    channel: remote
-                )
-            }
+            self.recordProtocolEvent(
+                type: .dmx,
+                command: "ART-NET DMX RX (Univ \(universe))",
+                details: "\(length) Chans [\(firstChans)...]",
+                rawHex: hex,
+                channel: remote
+            )
         }
     }
 
@@ -4430,10 +5228,8 @@ final class BitchBoyEngine: ObservableObject {
             guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
             let listener = try NWListener(using: params, on: nwPort)
             listener.newConnectionHandler = { [weak self] conn in
-                conn.start(queue: .global())
-                Task { @MainActor in
-                    self?.receivesACNPacket(conn: conn)
-                }
+                conn.start(queue: .global(qos: .userInitiated))
+                self?.receivesACNPacket(conn: conn)
             }
             listener.stateUpdateHandler = { [weak self] state in
                 DispatchQueue.main.async {
@@ -4456,13 +5252,17 @@ final class BitchBoyEngine: ObservableObject {
         }
     }
 
-    private func receivesACNPacket(conn: NWConnection) {
+    nonisolated private func receivesACNPacket(conn: NWConnection) {
         conn.receiveMessage { [weak self] data, _, _, error in
             if let data = data, data.count >= 126 {
-                self?.parseAndRecordIncomingsACN(data: data, remote: "\(conn.endpoint)")
+                Task { @MainActor [weak self] in
+                    self?.parseAndRecordIncomingsACN(data: data, remote: "\(conn.endpoint)")
+                }
             }
             if error == nil {
                 self?.receivesACNPacket(conn: conn)
+            } else {
+                conn.cancel()
             }
         }
     }
@@ -4472,15 +5272,13 @@ final class BitchBoyEngine: ObservableObject {
         let universe = (UInt16(data[113]) << 8) | UInt16(data[114])
         let priority = data[108]
         let hex = data.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " ")
-        DispatchQueue.main.async {
-            self.recordProtocolEvent(
-                type: .dmx,
-                command: "sACN E1.31 RX (Univ \(universe))",
-                details: "Priority: \(priority) | Remote: \(remote)",
-                rawHex: hex,
-                channel: remote
-            )
-        }
+        self.recordProtocolEvent(
+            type: .dmx,
+            command: "sACN E1.31 RX (Univ \(universe))",
+            details: "Priority: \(priority) | Remote: \(remote)",
+            rawHex: hex,
+            channel: remote
+        )
     }
 
     func stopsACNListener() {
@@ -4489,13 +5287,17 @@ final class BitchBoyEngine: ObservableObject {
         issACNListenerActive = false
     }
 
-    private func receiveOSCPacket(conn: NWConnection) {
+    nonisolated private func receiveOSCPacket(conn: NWConnection) {
         conn.receiveMessage { [weak self] data, context, isComplete, error in
             if let data = data, !data.isEmpty {
-                self?.parseAndRecordIncomingOSC(data: data, remote: "\(conn.endpoint)")
+                Task { @MainActor [weak self] in
+                    self?.parseAndRecordIncomingOSC(data: data, remote: "\(conn.endpoint)")
+                }
             }
             if error == nil {
                 self?.receiveOSCPacket(conn: conn)
+            } else {
+                conn.cancel()
             }
         }
     }
@@ -4513,50 +5315,99 @@ final class BitchBoyEngine: ObservableObject {
                     details += " | Tags: \(typeTag)"
                 }
             }
-            DispatchQueue.main.async {
-                self.recordProtocolEvent(type: .oscIn, command: addr, details: details, rawHex: hex, channel: remote)
-            }
+            self.recordProtocolEvent(type: .oscIn, command: addr, details: details, rawHex: hex, channel: remote)
         } else {
             let str = String(data: data, encoding: .utf8) ?? "Binary [\(data.count) bytes]"
-            DispatchQueue.main.async {
-                self.recordProtocolEvent(type: .oscIn, command: "UDP PACKET", details: str, rawHex: hex, channel: remote)
-            }
+            self.recordProtocolEvent(type: .oscIn, command: "UDP PACKET", details: str, rawHex: hex, channel: remote)
         }
     }
 
     func stopOSCListener() {
         oscListener?.cancel()
         oscListener = nil
-        isOscListenerActive = false
+        isOSCListenerActive = false
     }
 
     func recordProtocolEvent(type: ProtocolEvent.EventType, command: String, details: String, rawHex: String = "", channel: String = "") {
         guard !isProtocolPaused else { return }
-        totalPacketsReceived += 1
-        lastPacketTime = Date()
+        pendingTelemetry.total += 1
         switch type {
-        case .midiIn, .midiOut: midiPacketsCount += 1
-        case .oscIn, .oscOut: oscPacketsCount += 1
-        case .dmx: dmxPacketsCount += 1
-        case .msc: mscPacketsCount += 1
+        case .midiIn, .midiOut: pendingTelemetry.midi += 1
+        case .oscIn, .oscOut: pendingTelemetry.osc += 1
+        case .dmx: pendingTelemetry.dmx += 1
+        case .msc: pendingTelemetry.msc += 1
         case .sys, .all: break
         }
 
-        let entry = ProtocolEvent(
+        pendingProtocolEvents.append(ProtocolEvent(
             timestamp: Date(),
             type: type,
             channelOrTarget: channel,
             command: command,
             details: details,
             rawHex: rawHex
-        )
-        protocolEvents.insert(entry, at: 0)
-        if protocolEvents.count > 300 {
-            protocolEvents.removeLast()
+        ))
+        // Bound the staging buffer so a packet flood can't grow memory between flushes.
+        if pendingProtocolEvents.count > Self.maxProtocolEvents {
+            pendingProtocolEvents.removeFirst(pendingProtocolEvents.count - Self.maxProtocolEvents)
+        }
+        scheduleTelemetryFlush()
+    }
+
+    // MARK: - Coalesced Telemetry Publishing
+    // MIDI / OSC / DMX traffic can arrive hundreds of times per second. Publishing every packet
+    // individually invalidates the whole console UI per packet, so events and log lines are staged
+    // in non-observed buffers and committed to observed state in a single batch at ~20 Hz.
+    private static let maxProtocolEvents = 300
+    private static let maxLogLines = 40
+    private static let telemetryFlushInterval: Duration = .milliseconds(50)
+
+    @ObservationIgnored private var pendingProtocolEvents: [ProtocolEvent] = []
+    @ObservationIgnored private var pendingLogLines: [String] = []
+    @ObservationIgnored private var pendingTelemetry = (total: 0, midi: 0, osc: 0, dmx: 0, msc: 0)
+    @ObservationIgnored private var telemetryFlushTask: Task<Void, Never>?
+
+    private func scheduleTelemetryFlush() {
+        guard telemetryFlushTask == nil else { return }
+        telemetryFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.telemetryFlushInterval)
+            self?.flushTelemetry()
+        }
+    }
+
+    /// Commits all staged protocol events, counters and log lines to observed state at once.
+    func flushTelemetry() {
+        telemetryFlushTask?.cancel()
+        telemetryFlushTask = nil
+
+        if pendingTelemetry.total > 0 {
+            totalPacketsReceived += pendingTelemetry.total
+            if pendingTelemetry.midi > 0 { midiPacketsCount += pendingTelemetry.midi }
+            if pendingTelemetry.osc > 0 { oscPacketsCount += pendingTelemetry.osc }
+            if pendingTelemetry.dmx > 0 { dmxPacketsCount += pendingTelemetry.dmx }
+            if pendingTelemetry.msc > 0 { mscPacketsCount += pendingTelemetry.msc }
+            lastPacketTime = pendingProtocolEvents.last?.timestamp ?? Date()
+            pendingTelemetry = (0, 0, 0, 0, 0)
+        }
+
+        if !pendingProtocolEvents.isEmpty {
+            // Newest first, capped at maxProtocolEvents, built in one mutation.
+            var merged = Array(pendingProtocolEvents.reversed())
+            merged.append(contentsOf: protocolEvents.prefix(max(0, Self.maxProtocolEvents - merged.count)))
+            pendingProtocolEvents.removeAll(keepingCapacity: true)
+            protocolEvents = merged
+        }
+
+        if !pendingLogLines.isEmpty {
+            var merged = Array(pendingLogLines.reversed())
+            merged.append(contentsOf: midiLogs.prefix(max(0, Self.maxLogLines - merged.count)))
+            pendingLogLines.removeAll(keepingCapacity: true)
+            midiLogs = Array(merged.prefix(Self.maxLogLines))
         }
     }
 
     func clearProtocolLogs() {
+        pendingProtocolEvents.removeAll()
         protocolEvents.removeAll()
         SoundEffect.keyTap.play(with: soundPack)
         log("🗑 Protocol logs cleared")
@@ -4567,7 +5418,26 @@ final class BitchBoyEngine: ObservableObject {
         SoundEffect.knobTick.play(with: soundPack)
     }
 
+    func increaseTerminalFontSize() {
+        setTerminalFontSize(terminalFontSize + 1.0)
+    }
+
+    func decreaseTerminalFontSize() {
+        setTerminalFontSize(terminalFontSize - 1.0)
+    }
+
+    func setTerminalFontSize(_ size: CGFloat) {
+        let clamped = min(22.0, max(8.5, size))
+        terminalFontSize = clamped
+        UserDefaults.standard.set(Double(clamped), forKey: terminalFontSizeStorageKey)
+    }
+
+    func resetTerminalFontSize() {
+        setTerminalFontSize(11.5)
+    }
+
     func exportProtocolLogsToClipboard() {
+        flushTelemetry()
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss.SSS"
         let text = protocolEvents.reversed().map {
@@ -4602,20 +5472,46 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     // INCOMING MIDI PARSER
     // ------------------------------------------------------------------------
-    private func handleMIDIMessage(status: UInt8, data1: UInt8, data2: UInt8) {
+    fileprivate func handleMIDIMessage(status: UInt8, data1: UInt8, data2: UInt8) {
         let channelNum = Int((status & 0x0F) + 1)
-        if selectedMidiInputChannel > 0 && channelNum != selectedMidiInputChannel {
+        if selectedMIDIInputChannel > 0 && channelNum != selectedMIDIInputChannel {
             return
         }
-
-        // Forward physical BitchBoy MIDI input to Virtual Out & selected external programs!
-        routeIncomingMIDIToTargets(status: status, data1: data1, data2: data2, isFromHardware: true)
+        guard hardwareInputActionsEnabled else {
+            blockedMIDIPacketsCount += 1
+            return
+        }
 
         let msgType = status & 0xF0
         let isNoteOn = (msgType == 0x90) && (data2 > 0)
         let isNoteOff = (msgType == 0x80) || ((msgType == 0x90) && (data2 == 0))
         let isCC = (msgType == 0xB0)
+        let isNote = (msgType == 0x90 || msgType == 0x80)
         let channelStr = "Ch:\((status & 0x0F) + 1)"
+
+        guard let idx = (isCC ? controlIndex(forCC: data1) : (isNote ? controlIndex(forNote: data1) : nil)) else {
+            // General external MIDI input (e.g. from an external MIDI keyboard, controller, or DAW)
+            // Do NOT drop or mute! Record in protocol terminal and route to targets!
+            routedMIDIPacketsCount += 1
+            if isNoteOn {
+                recordProtocolEvent(type: .midiIn, command: "NOTE ON #\(data1) (\(midiNoteName(data1)))", details: "Velocity: \(data2) [\(Int(round(Double(data2)/127.0*100)))%]", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+            } else if isNoteOff {
+                recordProtocolEvent(type: .midiIn, command: "NOTE OFF #\(data1) (\(midiNoteName(data1)))", details: "Velocity: 0", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+            } else if isCC {
+                recordProtocolEvent(type: .midiIn, command: "CC #\(data1)", details: "Value: \(data2)", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
+            }
+            routeIncomingMIDIToTargets(status: status, data1: data1, data2: data2, isFromHardware: false)
+            return
+        }
+
+        // Hard isolation check: if section is blacked out, drop ALL info immediately!
+        guard isSectionEnabled(for: idx) else {
+            blockedMIDIPacketsCount += 1
+            return
+        }
+
+        routedMIDIPacketsCount += 1
+        routeIncomingMIDIToTargets(status: status, data1: data1, data2: data2, isFromHardware: true)
 
         if isNoteOn {
             recordProtocolEvent(type: .midiIn, command: "NOTE ON #\(data1) (\(midiNoteName(data1)))", details: "Velocity: \(data2) [\(Int(round(Double(data2)/127.0*100)))%]", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
@@ -4625,11 +5521,6 @@ final class BitchBoyEngine: ObservableObject {
             recordProtocolEvent(type: .midiIn, command: "CC #\(data1)", details: "Value: \(data2)", rawHex: String(format: "%02X %02X %02X", status, data1, data2), channel: channelStr)
         }
 
-        guard let idx = controls.firstIndex(where: {
-            if isCC { return ($0.kind == .vfader || $0.kind == .hfader || $0.kind == .knob) && $0.number == data1 }
-            else { return $0.kind == .key && $0.number == data1 }
-        }) else { return }
-
         selectedIndex = idx
 
         if isNoteOn || isNoteOff {
@@ -4638,7 +5529,7 @@ final class BitchBoyEngine: ObservableObject {
                 lastStreamMessage = "[\(controls[idx].label)] ON #\(data1) V:\(data2)"
                 SoundEffect.keyTap.play(with: soundPack)
 
-                if hardwareFeedbackEnabled {
+                if hardwareFeedbackEnabled && hardwareLEDSyncEnabled {
                     switch controls[idx].feedbackMode {
                     case .momentary:
                         controls[idx].currentLED = controls[idx].activeVelocity
@@ -4668,12 +5559,16 @@ final class BitchBoyEngine: ObservableObject {
                 if idx < 49 {
                     triggerReactiveKeyFX(at: idx)
                 }
-                sendOSCForControl(index: idx, isPress: true, liveVal: data2)
+                if oscSendEnabled {
+                    sendOSCForControl(index: idx, isPress: true, liveVal: data2)
+                }
             } else if isNoteOff {
                 controls[idx].isPressed = false
                 lastStreamMessage = "[\(controls[idx].label)] OFF #\(data1) V:0"
-                sendOSCForControl(index: idx, isPress: false, liveVal: 0)
-                if hardwareFeedbackEnabled && activeReactivePulses.isEmpty {
+                if oscSendEnabled {
+                    sendOSCForControl(index: idx, isPress: false, liveVal: 0)
+                }
+                if hardwareFeedbackEnabled && hardwareLEDSyncEnabled && activeReactivePulses.isEmpty {
                     let restoreVel: UInt8
                     switch controls[idx].feedbackMode {
                     case .toggle:
@@ -4707,9 +5602,37 @@ final class BitchBoyEngine: ObservableObject {
             if artNetMirrorHardwareFaders && idx >= 49 && idx < 57 {
                 let fIdx = idx - 49
                 artNetChannels[fIdx] = UInt8(min(255.0, max(0.0, Double(data2) / 127.0 * 255.0 * grandMasterLevel)))
-                sendArtNetDMX(host: artNetHost, universe: artNetUniverse, channels: artNetChannels)
+                sendThrottledArtNetFaderMirror()
             }
-            sendOSCForControl(index: idx, isPress: true, liveVal: data2)
+            if oscSendEnabled {
+                sendOSCForControl(index: idx, isPress: true, liveVal: data2)
+            }
+        }
+    }
+
+    // MARK: - Art-Net Fader Mirror Rate Limiting
+    // Hardware faders emit a CC per step; mirroring each one as a full 512-channel frame floods the
+    // network far beyond the DMX refresh rate. Frames are capped at 40 Hz with a trailing send so the
+    // final fader position always goes out.
+    @ObservationIgnored private var lastArtNetMirrorSendTime: CFTimeInterval = 0
+    @ObservationIgnored private var artNetMirrorTrailingTask: Task<Void, Never>?
+
+    private func sendThrottledArtNetFaderMirror() {
+        let minInterval: CFTimeInterval = 1.0 / 40.0
+        let now = CACurrentMediaTime()
+        if now - lastArtNetMirrorSendTime >= minInterval {
+            artNetMirrorTrailingTask?.cancel()
+            artNetMirrorTrailingTask = nil
+            lastArtNetMirrorSendTime = now
+            sendArtNetDMX(host: artNetHost, universe: artNetUniverse, channels: artNetChannels)
+        } else if artNetMirrorTrailingTask == nil {
+            artNetMirrorTrailingTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(25))
+                guard let self, !Task.isCancelled else { return }
+                self.artNetMirrorTrailingTask = nil
+                self.lastArtNetMirrorSendTime = CACurrentMediaTime()
+                self.sendArtNetDMX(host: self.artNetHost, universe: self.artNetUniverse, channels: self.artNetChannels)
+            }
         }
     }
 
@@ -4718,9 +5641,21 @@ final class BitchBoyEngine: ObservableObject {
     // ------------------------------------------------------------------------
     func routeIncomingMIDIToTargets(status: UInt8, data1: UInt8, data2: UInt8, isFromHardware: Bool) {
         guard midiThruEnabled else { return }
+        if isFromHardware && !hardwareMIDISendEnabled {
+            blockedMIDIPacketsCount += 1
+            return
+        }
         let msgType = status & 0xF0
         let isNote = (msgType == 0x90 || msgType == 0x80)
         let isCC = (msgType == 0xB0)
+
+        let targetIdx: Int? = isCC ? controlIndex(forCC: data1) : (isNote ? controlIndex(forNote: data1) : nil)
+        if let idx = targetIdx {
+            guard isSectionEnabled(for: idx) else {
+                blockedMIDIPacketsCount += 1
+                return
+            }
+        }
 
         if isNote && !forwardNotes { return }
         if isCC && !forwardCCs { return }
@@ -4745,38 +5680,40 @@ final class BitchBoyEngine: ObservableObject {
             outData2 = data2
         }
 
-        var packetList = MIDIPacketList()
-        var curPacket = MIDIPacketListInit(&packetList)
         let bytes: [UInt8] = [outStatus, outData1, outData2]
-        curPacket = MIDIPacketListAdd(&packetList, 1024, curPacket, 0, 3, bytes)
 
         // 1. Broadcast to macOS Virtual MIDI Source ("BitchBoy Virtual Out")
         if virtualOutEnabled && virtualSourceEndpoint != 0 {
-            MIDIReceived(virtualSourceEndpoint, &packetList)
+            sendMIDIPacket(endpoint: virtualSourceEndpoint, data: bytes, isVirtualSource: true)
         }
 
         // 2. Send to all checked external MIDI Destinations (DAWs, IAC Driver, Synths, QLab, etc.)
         for target in availableOutputTargets where selectedOutputNames.contains(target.name) {
             // Avoid echoing back into the physical BitchBoy LED port when routing from hardware
             if isFromHardware && target.endpoint == bitchBoyDestination { continue }
-            MIDISend(outputPort, target.endpoint, &packetList)
+            sendMIDIPacket(endpoint: target.endpoint, data: bytes)
         }
 
-        txPacketCount += 1
-        let chDisplay = Int(outChan) + 1
-        let hexStr = String(format: "%02X %02X %02X", outStatus, outData1, outData2)
-        let desc: String
-        if isCC {
-            desc = "CH\(chDisplay) CC#\(outData1) = \(outData2)"
-        } else if msgType == 0x90 && outData2 > 0 {
-            desc = "CH\(chDisplay) NOTE ON #\(outData1) V:\(outData2)"
-        } else {
-            desc = "CH\(chDisplay) NOTE OFF #\(outData1)"
-        }
-        lastRoutedMessage = "\(desc) [\(hexStr)]"
-        routerPacketHistory.insert("[\(hexStr)] \(desc)", at: 0)
-        if routerPacketHistory.count > 16 {
-            routerPacketHistory.removeLast()
+        let now = Date()
+        let shouldUpdateHistory = !isCC || now.timeIntervalSince(lastRoutedMessageUpdateTime) >= 0.08
+        if shouldUpdateHistory {
+            lastRoutedMessageUpdateTime = now
+            txPacketCount += 1
+            let chDisplay = Int(outChan) + 1
+            let hexStr = String(format: "%02X %02X %02X", outStatus, outData1, outData2)
+            let desc: String
+            if isCC {
+                desc = "CH\(chDisplay) CC#\(outData1) = \(outData2)"
+            } else if msgType == 0x90 && outData2 > 0 {
+                desc = "CH\(chDisplay) NOTE ON #\(outData1) V:\(outData2)"
+            } else {
+                desc = "CH\(chDisplay) NOTE OFF #\(outData1)"
+            }
+            lastRoutedMessage = "\(desc) [\(hexStr)]"
+            routerPacketHistory.insert("[\(hexStr)] \(desc)", at: 0)
+            if routerPacketHistory.count > 16 {
+                routerPacketHistory.removeLast()
+            }
         }
     }
 
@@ -4854,17 +5791,25 @@ final class BitchBoyEngine: ObservableObject {
     static let consoleBaseWidth: CGFloat = 1566
     static let consoleBaseHeight: CGFloat = 840
 
+    var hasLeftWing: Bool {
+        !leftWingModules.filter({ !$0.isHardwareModule }).isEmpty || isRearrangingModules
+    }
+
+    var hasRightWing: Bool {
+        !rightWingModules.filter({ !$0.isHardwareModule }).isEmpty || isRearrangingModules
+    }
+
     var totalLeftWingWidth: CGFloat {
-        guard !leftWingModules.isEmpty || isRearrangingModules else { return 0 }
+        guard hasLeftWing else { return 0 }
         return leftWingWidth + 14 + 10 // Left wing ScrollView (leftWingWidth) + Divider (14) + Spacing (10)
     }
 
     var centerConsoleWidth: CGFloat {
-        894
+        1032
     }
 
     var totalRightWingWidth: CGFloat {
-        guard !rightWingModules.isEmpty || isRearrangingModules else { return 0 }
+        guard hasRightWing else { return 0 }
         return 10 + 14 + rightWingWidth // Spacing (10) + Divider (14) + Right wing ScrollView (rightWingWidth)
     }
 
@@ -4882,30 +5827,36 @@ final class BitchBoyEngine: ObservableObject {
 
     var leftWingContentHeight: CGFloat {
         guard !leftWingModules.isEmpty || isRearrangingModules else { return 0 }
-        let modsH = leftWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
-        if leftWingModules.isEmpty && isRearrangingModules {
+        let nonHw = leftWingModules.filter { !$0.isHardwareModule }
+        let rearrangeExtra: CGFloat = isRearrangingModules ? (CGFloat(nonHw.count) * 32 + 90) : 0
+        let modsH = nonHw.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
+        if nonHw.isEmpty && isRearrangingModules {
             return 140
         }
-        return modsH + 20
+        return modsH + rearrangeExtra + 20
     }
 
     var rightWingContentHeight: CGFloat {
         guard !rightWingModules.isEmpty || isRearrangingModules else { return 0 }
-        let modsH = rightWingModules.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
-        if rightWingModules.isEmpty && isRearrangingModules {
+        let nonHw = rightWingModules.filter { !$0.isHardwareModule }
+        let rearrangeExtra: CGFloat = isRearrangingModules ? (CGFloat(nonHw.count) * 32 + 90) : 0
+        let modsH = nonHw.reduce(CGFloat(0)) { $0 + (moduleCustomHeights[$1] ?? $1.defaultSlotHeight) + 12 }
+        if nonHw.isEmpty && isRearrangingModules {
             return 140
         }
-        return modsH + 20
+        return modsH + rearrangeExtra + 20
     }
 
     var centerDeckHeight: CGFloat {
-        630
+        604
     }
 
     var bottomRackContentHeight: CGFloat {
-        guard !bottomRackModules.isEmpty || isRearrangingModules else { return 0 }
-        let maxRackH = bottomRackModules.map { moduleCustomHeights[$0] ?? $0.defaultSlotHeight }.max() ?? 240
-        return maxRackH + 95
+        let nonHw = bottomRackModules.filter { !$0.isHardwareModule }
+        guard !nonHw.isEmpty || isRearrangingModules else { return 0 }
+        let rearrangeExtra: CGFloat = isRearrangingModules ? 34 : 0
+        let maxRackH = nonHw.map { moduleCustomHeights[$0] ?? $0.defaultSlotHeight }.max() ?? 260
+        return maxRackH + rearrangeExtra + 45
     }
 
     var centerTotalHeight: CGFloat {
@@ -4915,7 +5866,7 @@ final class BitchBoyEngine: ObservableObject {
     // Exact physical content height of the faceplate columns (encompassing all wings, deck, and bottom expansion rack)
     var chassisContentHeight: CGFloat {
         let maxColumnH = max(centerTotalHeight, max(leftWingContentHeight, rightWingContentHeight))
-        return max(630, maxColumnH)
+        return max(604, maxColumnH)
     }
 
     var effectiveConsoleHeight: CGFloat {
@@ -4956,7 +5907,7 @@ final class BitchBoyEngine: ObservableObject {
             self.customThemes = CustomChassisTheme.starterThemes()
         }
 
-        if let savedThemeID = UserDefaults.standard.string(forKey: activeCustomThemeIdStorageKey),
+        if let savedThemeID = UserDefaults.standard.string(forKey: activeCustomThemeIDStorageKey),
            let match = customThemes.first(where: { $0.id.uuidString == savedThemeID }) {
             self.activeCustomTheme = match
         } else {
@@ -4988,7 +5939,6 @@ final class BitchBoyEngine: ObservableObject {
         }
         let minW = effectiveConsoleWidth * 0.15
         let minH = effectiveConsoleHeight * 0.15
-        let baseSize = NSSize(width: effectiveConsoleWidth, height: effectiveConsoleHeight)
         let detachedWinSet = Set(moduleWindows.values)
         for (mod, win) in moduleWindows {
             win.level = isModuleWindowTopMost(mod) ? .floating : .normal
@@ -5029,7 +5979,7 @@ final class BitchBoyEngine: ObservableObject {
         activeCustomTheme = theme
         Self.activeCustomThemeStatic = theme
         currentTheme = .customUser
-        UserDefaults.standard.set(theme.id.uuidString, forKey: activeCustomThemeIdStorageKey)
+        UserDefaults.standard.set(theme.id.uuidString, forKey: activeCustomThemeIDStorageKey)
         UserDefaults.standard.set(currentTheme.rawValue, forKey: themeStorageKey)
         SoundEffect.presetSwitch.play(with: soundPack)
         log("🎨 Applied Custom Theme: '\(theme.name)'")
@@ -5228,24 +6178,24 @@ final class BitchBoyEngine: ObservableObject {
     func simulateGitHubUpdateForTesting() {
         let simulated = GitHubReleaseInfo(
             id: 999999,
-            tagName: "v2.0.0",
-            name: "BitchManager v2.0.0 // Next-Gen Cyber Release",
+            tagName: "v3.0.0",
+            name: "BitchManager v3.0.0 // Mapping & Show Control Release",
             body: """
-            ### 🚀 BitchManager v2.0.0 Release Notes
+            ### 🚀 BitchManager v3.0.0 Release Notes
 
-            - **Custom Cyber Chassis Themes**: Built-in Theme Studio with full 6-point glow color palette.
-            - **Custom Sound Bank**: Upload custom .WAV, .MP3, and .AIFF audio for any hardware or app action.
-            - **Center Spotlight & Module Rearrange**: Pop out windows, center modules, and iOS-style jiggle rearrangement.
-            - **Tailored Floating Windows**: Aspect-ratio locked, non-clipping, and pin to top-most window level.
-            - **Automatic GitHub Updates**: In-app one-click update detection and background installation!
+            - **Right-Click Mapping Editor**: View and edit any key, fader, or knob's mapping, LED feedback, and action assignment.
+            - **Show Control Engines**: Per-key OSC, MIDI Show Control, Art-Net 4, and sACN (E1.31) output.
+            - **Undo / Redo & Copy / Paste**: Full undo history plus copy, paste, and duplicate for control configs and LED colors.
+            - **Hardware MIDI Isolation**: Per-section mute switches, quick scenario profiles, and live packet counters.
+            - **Creator Card**: Click the TAYLOR FOSSEN badge to say hi (and buy me a coffee ☕).
             """,
-            htmlUrl: "https://github.com/kookly/BitchManager/releases",
+            htmlURL: "https://github.com/kookly/BitchManager/releases",
             publishedAt: "2026-10-24T12:00:00Z",
             assets: [
                 GitHubReleaseAsset(
                     id: 101,
                     name: "BitchManager.zip",
-                    browserDownloadUrl: "https://github.com/kookly/BitchManager/releases",
+                    browserDownloadURL: "https://github.com/kookly/BitchManager/releases",
                     size: 14_850_000,
                     contentType: "application/zip"
                 )
@@ -5299,9 +6249,9 @@ final class BitchBoyEngine: ObservableObject {
             return
         }
 
-        guard let asset = release.bestAsset, let assetUrl = URL(string: asset.browserDownloadUrl), assetUrl.scheme?.hasPrefix("http") == true else {
-            if let webUrl = URL(string: release.htmlUrl) {
-                NSWorkspace.shared.open(webUrl)
+        guard let asset = release.bestAsset, let assetURL = URL(string: asset.browserDownloadURL), assetURL.scheme?.hasPrefix("http") == true else {
+            if let webURL = URL(string: release.htmlURL) {
+                NSWorkspace.shared.open(webURL)
             }
             return
         }
@@ -5317,7 +6267,15 @@ final class BitchBoyEngine: ObservableObject {
         let sessionConfig = URLSessionConfiguration.default
         let session = URLSession(configuration: sessionConfig)
 
-        let task = session.downloadTask(with: assetUrl) { [weak self] localURL, response, error in
+        let task = session.downloadTask(with: assetURL) { [weak self] localURL, response, error in
+            let archiveDest = tempBase.appendingPathComponent(asset.name)
+            // Only accept a successful payload; a 404/HTML error page must never be treated as the archive.
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
+            if let localURL = localURL, (200..<300).contains(statusCode) {
+                try? FileManager.default.removeItem(at: archiveDest)
+                try? FileManager.default.moveItem(at: localURL, to: archiveDest)
+            }
+
             DispatchQueue.main.async {
                 guard let self = self else { return }
 
@@ -5328,7 +6286,7 @@ final class BitchBoyEngine: ObservableObject {
                     return
                 }
 
-                guard let localURL = localURL else {
+                guard FileManager.default.fileExists(atPath: archiveDest.path) else {
                     self.isDownloadingUpdate = false
                     self.updateError = "Downloaded file could not be saved."
                     self.updateStatusMessage = ""
@@ -5343,10 +6301,6 @@ final class BitchBoyEngine: ObservableObject {
                     let targetAppPath = Bundle.main.bundleURL.path
                     let extractedDir = tempBase.appendingPathComponent("Extracted")
                     try? FileManager.default.createDirectory(at: extractedDir, withIntermediateDirectories: true)
-
-                    let archiveDest = tempBase.appendingPathComponent(asset.name)
-                    try? FileManager.default.removeItem(at: archiveDest)
-                    try? FileManager.default.moveItem(at: localURL, to: archiveDest)
 
                     var newAppBundleURL: URL? = nil
 
@@ -5396,8 +6350,8 @@ final class BitchBoyEngine: ObservableObject {
                     DispatchQueue.main.async {
                         guard let newAppURL = newAppBundleURL else {
                             self.isDownloadingUpdate = false
-                            if let webUrl = URL(string: release.htmlUrl) {
-                                NSWorkspace.shared.open(webUrl)
+                            if let webURL = URL(string: release.htmlURL) {
+                                NSWorkspace.shared.open(webURL)
                             }
                             self.updateError = "The release asset did not contain an installable BitchManager.app. Opening GitHub release page."
                             return
@@ -5458,6 +6412,8 @@ final class BitchBoyEngine: ObservableObject {
         }
         activeDownloadTask = task
         task.resume()
+        // Release the one-off session once the download finishes; un-invalidated sessions are never freed.
+        session.finishTasksAndInvalidate()
     }
 
     func resizeMainWindowToScale(_ scale: CGFloat) {
@@ -5510,18 +6466,8 @@ final class BitchBoyEngine: ObservableObject {
             bottomRackModules = [.reactiveKeyFX]
         }
 
-        // Strip any hardware modules from expansion bays (hardware controls belong strictly on the faceplate)
-        leftWingModules.removeAll(where: { $0.isHardwareModule })
-        rightWingModules.removeAll(where: { $0.isHardwareModule })
-        bottomRackModules.removeAll(where: { $0.isHardwareModule })
-
-        // Ensure all studio expansion modules are accounted for without duplicates
-        var placed = Set(leftWingModules + rightWingModules + bottomRackModules)
-        for m in StudioModuleID.expansionModules where !placed.contains(m) {
-            bottomRackModules.append(m)
-            placed.insert(m)
-        }
-        moduleOrder = leftWingModules + rightWingModules + bottomRackModules
+        // Ensure all studio expansion modules are strictly deduplicated and accounted for
+        sanitizeAndDeduplicateModules()
 
         // Load Custom Heights
         if let hData = UserDefaults.standard.data(forKey: moduleHeightsStorageKey),
@@ -5616,6 +6562,47 @@ final class BitchBoyEngine: ObservableObject {
         return .leftWing
     }
 
+    func sanitizeAndDeduplicateModules() {
+        // Strip any hardware modules from expansion bays
+        leftWingModules.removeAll(where: { $0.isHardwareModule })
+        rightWingModules.removeAll(where: { $0.isHardwareModule })
+        bottomRackModules.removeAll(where: { $0.isHardwareModule })
+
+        var placed = Set<StudioModuleID>()
+
+        func dedupeList(_ list: inout [StudioModuleID]) {
+            var unique: [StudioModuleID] = []
+            for m in list {
+                if !placed.contains(m) && !detachedModules.contains(m) && StudioModuleID.expansionModules.contains(m) {
+                    placed.insert(m)
+                    unique.append(m)
+                }
+            }
+            list = unique
+        }
+
+        dedupeList(&leftWingModules)
+        dedupeList(&rightWingModules)
+        dedupeList(&bottomRackModules)
+
+        // Ensure all studio expansion modules exist across the 3 zones at most once
+        for m in StudioModuleID.expansionModules {
+            if !placed.contains(m) && !detachedModules.contains(m) {
+                if leftWingModules.count < 2 {
+                    leftWingModules.append(m)
+                } else if rightWingModules.count < 2 {
+                    rightWingModules.append(m)
+                } else {
+                    bottomRackModules.append(m)
+                }
+                placed.insert(m)
+            }
+        }
+
+        moduleOrder = leftWingModules + rightWingModules + bottomRackModules
+        saveModuleLayout()
+    }
+
     func moveModuleToZone(_ module: StudioModuleID, zone: ModuleZone, atIndex: Int? = nil) {
         if spotlightModule == module {
             withAnimation { spotlightModule = nil }
@@ -5631,6 +6618,16 @@ final class BitchBoyEngine: ObservableObject {
             return
         }
 
+        // Close any standalone window if it was popped out
+        if let win = moduleWindows[module] {
+            win.delegate = nil
+            win.close()
+            moduleWindows.removeValue(forKey: module)
+            moduleWindowDelegates.removeValue(forKey: module)
+        }
+        detachedModules.remove(module)
+
+        // Clean out from ALL zones first so duplicates are impossible
         leftWingModules.removeAll(where: { $0 == module })
         rightWingModules.removeAll(where: { $0 == module })
         bottomRackModules.removeAll(where: { $0 == module })
@@ -5638,24 +6635,19 @@ final class BitchBoyEngine: ObservableObject {
         switch zone {
         case .floating:
             popOutModuleToWindow(module)
+            return
         case .leftWing:
-            detachedModules.remove(module)
-            dockModuleBackFromWindow(module)
             let idx = min(atIndex ?? leftWingModules.count, leftWingModules.count)
             leftWingModules.insert(module, at: idx)
         case .rightWing:
-            detachedModules.remove(module)
-            dockModuleBackFromWindow(module)
             let idx = min(atIndex ?? rightWingModules.count, rightWingModules.count)
             rightWingModules.insert(module, at: idx)
         case .bottomRack:
-            detachedModules.remove(module)
-            dockModuleBackFromWindow(module)
             let idx = min(atIndex ?? bottomRackModules.count, bottomRackModules.count)
             bottomRackModules.insert(module, at: idx)
         }
-        moduleOrder = leftWingModules + rightWingModules + bottomRackModules
-        saveModuleLayout()
+
+        sanitizeAndDeduplicateModules()
         SoundEffect.keyTap.play(with: soundPack)
         log("📍 Moved '\(module.shortName)' to \(zone.displayName)")
     }
@@ -5769,6 +6761,10 @@ final class BitchBoyEngine: ObservableObject {
             if currentH < 320 { nextH = 380 }
             else if currentH < 440 { nextH = 480 }
             else { nextH = 290 }
+        case .hardwareMIDIFilter:
+            if currentH < 340 { nextH = 460 }
+            else if currentH < 540 { nextH = 620 }
+            else { nextH = 300 }
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             moduleCustomHeights[module] = nextH
@@ -5832,6 +6828,10 @@ final class BitchBoyEngine: ObservableObject {
             if h <= 320 { return "COMPACT" }
             if h <= 420 { return "STANDARD" }
             return "EXPANDED"
+        case .hardwareMIDIFilter:
+            if h <= 340 { return "COMPACT" }
+            if h <= 520 { return "STANDARD" }
+            return "EXPANDED"
         }
     }
 
@@ -5852,12 +6852,13 @@ final class BitchBoyEngine: ObservableObject {
         case .horizontalFaders: return h > 230
         case .rotaryKnobs: return h > 360
         case .colorPickerHUD: return h > 420
+        case .hardwareMIDIFilter: return h > 520
         }
     }
 
     func moduleTextScale(_ module: StudioModuleID, isSpotlight: Bool = false) -> CGFloat {
-        if isSpotlight { return 1.45 }
-        return 1.22
+        if isSpotlight { return 1.75 }
+        return 1.42
     }
 
     func toggleSpotlightModule(_ module: StudioModuleID) {
@@ -5991,14 +6992,13 @@ final class BitchBoyEngine: ObservableObject {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
             leftWingModules = [.showControl, .memorySlots]
             rightWingModules = [.midiRouter, .customFXStudio]
-            bottomRackModules = [.reactiveKeyFX]
-            moduleOrder = leftWingModules + rightWingModules + bottomRackModules
+            bottomRackModules = [.terminal, .reactiveKeyFX]
             moduleCustomHeights.removeAll()
             moduleCustomWidths.removeAll()
             leftWingWidth = 380
             rightWingWidth = 380
+            sanitizeAndDeduplicateModules()
         }
-        saveModuleLayout()
         saveModuleSizes()
         log("🔄 Reset Module Layout to Default Positions")
     }
@@ -6061,18 +7061,18 @@ final class BitchBoyEngine: ObservableObject {
             _ = detachedModules.remove(module)
             // If it's a studio expansion module, ensure it is re-docked into its expansion bay
             if !module.isHardwareModule {
-                if !leftWingModules.contains(module) && !rightWingModules.contains(module) && !bottomRackModules.contains(module) {
-                    switch module {
-                    case .showControl, .memorySlots:
-                        leftWingModules.append(module)
-                    case .midiRouter, .customFXStudio:
-                        rightWingModules.append(module)
-                    default:
-                        bottomRackModules.append(module)
-                    }
-                    moduleOrder = leftWingModules + rightWingModules + bottomRackModules
-                    saveModuleLayout()
+                leftWingModules.removeAll(where: { $0 == module })
+                rightWingModules.removeAll(where: { $0 == module })
+                bottomRackModules.removeAll(where: { $0 == module })
+                switch module {
+                case .showControl, .memorySlots:
+                    leftWingModules.append(module)
+                case .midiRouter, .customFXStudio:
+                    rightWingModules.append(module)
+                default:
+                    bottomRackModules.append(module)
                 }
+                sanitizeAndDeduplicateModules()
             }
         }
         SoundEffect.knobTick.play(with: soundPack)
@@ -6080,7 +7080,9 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func dockAllModules() {
-        for mod in StudioModuleID.allCases {
+        // Only re-dock modules that are actually popped out; re-docking an already-docked module
+        // would move it back to its default wing and wipe the user's custom layout.
+        for mod in StudioModuleID.allCases where detachedModules.contains(mod) || moduleWindows[mod] != nil {
             dockModuleBackFromWindow(mod)
         }
         log("↙ All modules docked back into main console")
@@ -6215,6 +7217,7 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func addCustomFXFrame() {
+        recordUndoSnapshot(actionName: "Add FX Frame")
         let newFrame = CustomLightEffect.emptyFrame(fill: 0)
         editingCustomFX.frames.append(newFrame)
         editingFrameIndex = editingCustomFX.frames.count - 1
@@ -6224,6 +7227,7 @@ final class BitchBoyEngine: ObservableObject {
 
     func duplicateCustomFXFrame() {
         guard !editingCustomFX.frames.isEmpty else { return }
+        recordUndoSnapshot(actionName: "Duplicate FX Frame")
         let safeIdx = min(max(0, editingFrameIndex), editingCustomFX.frames.count - 1)
         let copy = editingCustomFX.frames[safeIdx]
         editingCustomFX.frames.insert(copy, at: safeIdx + 1)
@@ -6237,6 +7241,7 @@ final class BitchBoyEngine: ObservableObject {
             clearCurrentCustomFXFrame()
             return
         }
+        recordUndoSnapshot(actionName: "Delete FX Frame")
         let safeIdx = min(max(0, editingFrameIndex), editingCustomFX.frames.count - 1)
         editingCustomFX.frames.remove(at: safeIdx)
         editingFrameIndex = max(0, safeIdx - 1)
@@ -6306,7 +7311,7 @@ final class BitchBoyEngine: ObservableObject {
     func randomizeCurrentFrameSparks() {
         guard !editingCustomFX.frames.isEmpty else { return }
         let safeIdx = min(max(0, editingFrameIndex), editingCustomFX.frames.count - 1)
-        let palette: [UInt8] = [0, 0, 72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let palette: [UInt8] = [0, 0, 72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
         for k in 0..<49 {
             editingCustomFX.frames[safeIdx][k] = palette.randomElement() ?? 0
         }
@@ -6316,7 +7321,7 @@ final class BitchBoyEngine: ObservableObject {
     func applyRainbowToCurrentFrame() {
         guard !editingCustomFX.frames.isEmpty else { return }
         let safeIdx = min(max(0, editingFrameIndex), editingCustomFX.frames.count - 1)
-        let rainbow: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+        let rainbow: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
         for k in 0..<49 {
             let col = BitchBoyKeyMap.keyPositions[k].col
             editingCustomFX.frames[safeIdx][k] = rainbow[(col + safeIdx) % rainbow.count]
@@ -6413,19 +7418,13 @@ final class BitchBoyEngine: ObservableObject {
                 let activeFX = self.editingCustomFX
                 if activeFX.isProcedural {
                     phase += 0.06 * self.fxSpeed
-                    var batch = self.controls
-                    var didChange = false
+                    var updates: [(index: Int, velocity: UInt8)] = []
+                    updates.reserveCapacity(49)
                     for k in 0..<49 {
                         let v = self.evaluateProceduralWave(fx: activeFX, keyIndex: k, phase: phase)
-                        if batch[k].currentLED != v {
-                            batch[k].currentLED = v
-                            didChange = true
-                            self.sendNoteOn(note: batch[k].number, velocity: v)
-                        }
+                        updates.append((k, v))
                     }
-                    if didChange {
-                        self.controls = batch
-                    }
+                    self.batchUpdateLEDs(updates)
                 } else {
                     let count = activeFX.frames.count
                     guard count > 0 else { return }
@@ -6434,19 +7433,12 @@ final class BitchBoyEngine: ObservableObject {
                         self.editingFrameIndex = idx
                     }
                     let frame = activeFX.frames[idx]
-                    var batch = self.controls
-                    var didChange = false
+                    var updates: [(index: Int, velocity: UInt8)] = []
+                    updates.reserveCapacity(min(49, frame.count))
                     for k in 0..<min(49, frame.count) {
-                        let v = frame[k]
-                        if batch[k].currentLED != v {
-                            batch[k].currentLED = v
-                            didChange = true
-                            self.sendNoteOn(note: batch[k].number, velocity: v)
-                        }
+                        updates.append((k, frame[k]))
                     }
-                    if didChange {
-                        self.controls = batch
-                    }
+                    self.batchUpdateLEDs(updates)
 
                     if count > 1 {
                         switch activeFX.loopMode {
@@ -6510,16 +7502,17 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func executeAction(for item: ControlItem) {
+        if let idx = controls.firstIndex(where: { $0.id == item.id }) {
+            guard isSectionEnabled(for: idx) else { return }
+        }
         switch item.actionType {
         case .passthrough: break
         case .qwerty:
-            var totalDelay = 0.0
-            for step in item.qwertySteps {
-                totalDelay += Double(step.delayMs) / 1000.0
-                let delay = totalDelay
-                Task { @MainActor in
-                    if delay > 0 {
-                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard qwertyKeybindsEnabled else { return }
+            Task { @MainActor in
+                for step in item.qwertySteps {
+                    if step.delayMs > 0 {
+                        try? await Task.sleep(nanoseconds: UInt64(step.delayMs) * 1_000_000)
                     }
                     self.triggerSingleQwerty(key: step.key, cmd: step.cmd, shift: step.shift, alt: step.alt, ctrl: step.ctrl)
                 }
@@ -6529,16 +7522,15 @@ final class BitchBoyEngine: ObservableObject {
             break
         case .applescript:
             let task = Process()
-            task.launchPath = "/usr/bin/osascript"
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             task.arguments = ["-e", item.appleScript]
             try? task.run()
         case .msc:
-            let cmd = MSCCommand(rawValue: item.mscCommand) ?? .go
-            sendMSCBroadcast(command: cmd, cue: item.mscCueNumber, deviceID: mscDeviceID, format: mscCommandFormat)
+            sendMSCBroadcast(command: item.typedMSCCommand, cue: item.mscCueNumber, deviceID: mscDeviceID, format: mscCommandFormat)
         case .artnet:
             sendArtNetFullRig()
         case .sacn:
-            sendsACNFullRig()
+            sendSACNFullRig()
         }
     }
 
@@ -6598,22 +7590,7 @@ final class BitchBoyEngine: ObservableObject {
     }
 
     func sendOSC(host: String, port: UInt16, address: String) {
-        recordProtocolEvent(
-            type: .oscOut,
-            command: address,
-            details: "Target: \(host):\(port)",
-            rawHex: address.data(using: .utf8)?.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ") ?? "",
-            channel: "\(host):\(port)"
-        )
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
-        let conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .udp)
-        conn.start(queue: .global())
-        var data = Data(address.utf8)
-        let pad = 4 - (data.count % 4)
-        data.append(contentsOf: repeatElement(0, count: pad))
-        data.append(contentsOf: [0x2C, 0x00, 0x00, 0x00])
-        conn.send(content: data, completion: .contentProcessed { _ in conn.cancel() })
-        log("📡 OSC UDP -> \(host):\(port) \(address)")
+        sendCustomOSC(host: host, port: port, address: address, argType: .none, argValue: "")
     }
 
     func selectSlot(_ idx: Int) {
@@ -6640,9 +7617,420 @@ final class BitchBoyEngine: ObservableObject {
         guard slots.indices.contains(activeSlot) else { return }
         slots[activeSlot].controls = controls
         slots[activeSlot].globalRules = globalRules
-        if let encoded = try? JSONEncoder().encode(slots) {
-            UserDefaults.standard.set(encoded, forKey: storageKey)
+        scheduleSlotPersistence()
+    }
+
+    // MARK: - Debounced Slot Persistence
+    // saveCurrentSlot() is called on every edit (including continuous fader drags). Encoding all
+    // 8 slots x 69 controls to JSON and writing UserDefaults on each call stalls the main thread,
+    // so the in-memory slot is updated immediately and the disk write is coalesced.
+    @ObservationIgnored private var slotPersistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
+
+    private func scheduleSlotPersistence() {
+        slotPersistenceTask?.cancel()
+        slotPersistenceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.persistSlotsNow()
         }
+    }
+
+    /// Writes all memory slots to disk immediately. Called after edits settle and on app termination.
+    func persistSlotsNow() {
+        slotPersistenceTask?.cancel()
+        slotPersistenceTask = nil
+        guard let encoded = try? JSONEncoder().encode(slots) else { return }
+        UserDefaults.standard.set(encoded, forKey: storageKey)
+        postVoiceOverAnnouncement("Presets saved to internal memory for slot \(activeSlot + 1)")
+    }
+
+    // MARK: - Toast Notifications Engine
+    func showToast(_ message: String, icon: String = "checkmark.circle.fill") {
+        toastDismissTask?.cancel()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+            self.toastNotification = ToastNotificationItem(message: message, icon: icon)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            withAnimation(.easeOut(duration: 0.25)) {
+                self?.toastNotification = nil
+            }
+        }
+        toastDismissTask = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
+    }
+
+    // MARK: - Undo / Redo Memory Engine
+    func recordUndoSnapshot(actionName: String, debounceSeconds: Double = 0.0) {
+        let now = Date()
+        if debounceSeconds > 0,
+           let last = undoStack.last,
+           last.description == actionName,
+           now.timeIntervalSince(last.timestamp) < debounceSeconds {
+            return
+        }
+        let snapshot = UndoSnapshot(
+            description: actionName,
+            controls: self.controls,
+            activeSlot: self.activeSlot,
+            timestamp: now,
+            customEffects: self.customEffects,
+            editingCustomFX: self.editingCustomFX,
+            editingFrameIndex: self.editingFrameIndex
+        )
+        undoStack.append(snapshot)
+        if undoStack.count > maxUndoSteps {
+            undoStack.removeFirst(undoStack.count - maxUndoSteps)
+        }
+        redoStack.removeAll()
+        undoStepsCount = undoStack.count
+        redoStepsCount = 0
+        lastUndoActionName = actionName
+        lastRedoActionName = ""
+    }
+
+    func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        let current = UndoSnapshot(
+            description: previous.description,
+            controls: self.controls,
+            activeSlot: self.activeSlot,
+            timestamp: Date(),
+            customEffects: self.customEffects,
+            editingCustomFX: self.editingCustomFX,
+            editingFrameIndex: self.editingFrameIndex
+        )
+        redoStack.append(current)
+        if redoStack.count > maxUndoSteps {
+            redoStack.removeFirst()
+        }
+        undoStepsCount = undoStack.count
+        redoStepsCount = redoStack.count
+        lastUndoActionName = undoStack.last?.description ?? ""
+        lastRedoActionName = previous.description
+
+        let oldControls = self.controls
+        self.controls = previous.controls
+        self.activeSlot = previous.activeSlot
+        if let fx = previous.customEffects { self.customEffects = fx }
+        if let cur = previous.editingCustomFX { self.editingCustomFX = cur }
+        if let fi = previous.editingFrameIndex { self.editingFrameIndex = fi }
+
+        var notesToSend: [(note: UInt8, velocity: UInt8)] = []
+        for i in 0..<min(oldControls.count, previous.controls.count) {
+            if previous.controls[i].hasLED && oldControls[i].currentLED != previous.controls[i].currentLED {
+                notesToSend.append((note: previous.controls[i].number, velocity: previous.controls[i].currentLED))
+            }
+        }
+        if !notesToSend.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: notesToSend)
+        }
+        saveCurrentSlot()
+        showToast("UNDO: \(previous.description)", icon: "arrow.uturn.backward.circle.fill")
+        log("↩️ Undid: \(previous.description) (\(undoStack.count) steps in memory)")
+        SoundEffect.presetSwitch.play(with: soundPack)
+        postVoiceOverAnnouncement("Undid: \(previous.description)")
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        let current = UndoSnapshot(
+            description: next.description,
+            controls: self.controls,
+            activeSlot: self.activeSlot,
+            timestamp: Date(),
+            customEffects: self.customEffects,
+            editingCustomFX: self.editingCustomFX,
+            editingFrameIndex: self.editingFrameIndex
+        )
+        undoStack.append(current)
+        if undoStack.count > maxUndoSteps {
+            undoStack.removeFirst()
+        }
+        undoStepsCount = undoStack.count
+        redoStepsCount = redoStack.count
+        lastUndoActionName = next.description
+        lastRedoActionName = redoStack.last?.description ?? ""
+
+        let oldControls = self.controls
+        self.controls = next.controls
+        self.activeSlot = next.activeSlot
+        if let fx = next.customEffects { self.customEffects = fx }
+        if let cur = next.editingCustomFX { self.editingCustomFX = cur }
+        if let fi = next.editingFrameIndex { self.editingFrameIndex = fi }
+
+        var notesToSend: [(note: UInt8, velocity: UInt8)] = []
+        for i in 0..<min(oldControls.count, next.controls.count) {
+            if next.controls[i].hasLED && oldControls[i].currentLED != next.controls[i].currentLED {
+                notesToSend.append((note: next.controls[i].number, velocity: next.controls[i].currentLED))
+            }
+        }
+        if !notesToSend.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: notesToSend)
+        }
+        saveCurrentSlot()
+        showToast("REDO: \(next.description)", icon: "arrow.uturn.forward.circle.fill")
+        log("↪️ Redid: \(next.description)")
+        SoundEffect.presetSwitch.play(with: soundPack)
+        postVoiceOverAnnouncement("Redid: \(next.description)")
+    }
+
+    func clearUndoHistory() {
+        undoStack.removeAll()
+        redoStack.removeAll()
+        undoStepsCount = 0
+        redoStepsCount = 0
+        lastUndoActionName = ""
+        lastRedoActionName = ""
+        showToast("CLEARED UNDO MEMORY", icon: "trash.circle.fill")
+        log("🗑️ Undo / Redo history cleared from memory.")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    // MARK: - Copy & Paste Control Operations
+    func copyControl(at index: Int? = nil) {
+        let idx = index ?? selectedIndex
+        guard idx >= 0 && idx < controls.count else { return }
+        let clip = ControlClipboardData(from: controls[idx])
+        self.copiedControlConfig = clip
+        if let data = try? JSONEncoder().encode(clip),
+           let str = String(data: data, encoding: .utf8) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(str, forType: .string)
+        }
+        showToast("COPIED CONFIG: \(controls[idx].label)", icon: "doc.on.doc.fill")
+        log("📋 Copied control settings for \(controls[idx].label)")
+        SoundEffect.knobTick.play(with: soundPack)
+        postVoiceOverAnnouncement("Copied configuration for \(controls[idx].label)")
+    }
+
+    @inlinable
+    func copyControl(index: Int) {
+        copyControl(at: index)
+    }
+
+    private func resolveClipboardData() -> ControlClipboardData? {
+        if let clip = copiedControlConfig { return clip }
+        if let str = NSPasteboard.general.string(forType: .string),
+           let data = str.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(ControlClipboardData.self, from: data) {
+            self.copiedControlConfig = decoded
+            return decoded
+        }
+        return nil
+    }
+
+    func pasteControl(to targetIndex: Int) {
+        guard targetIndex >= 0 && targetIndex < controls.count else { return }
+        guard let clip = resolveClipboardData() else {
+            showToast("CLIPBOARD EMPTY", icon: "exclamationmark.triangle.fill")
+            return
+        }
+        recordUndoSnapshot(actionName: "Paste Config to \(controls[targetIndex].label)")
+        clip.apply(to: &controls[targetIndex])
+        if controls[targetIndex].hasLED {
+            sendNoteOn(note: controls[targetIndex].number, velocity: controls[targetIndex].currentLED)
+        }
+        saveCurrentSlot()
+        showToast("PASTED CONFIG TO \(controls[targetIndex].label)", icon: "doc.badge.arrow.up.fill")
+        log("📋 Pasted configuration onto \(controls[targetIndex].label)")
+        SoundEffect.keyTap.play(with: soundPack)
+        postVoiceOverAnnouncement("Pasted configuration to \(controls[targetIndex].label)")
+    }
+
+    func pasteControlToSelected() {
+        let targets = selectedIndices.isEmpty ? [selectedIndex] : Array(selectedIndices)
+        guard !targets.isEmpty else { return }
+        guard let clip = resolveClipboardData() else {
+            showToast("CLIPBOARD EMPTY", icon: "exclamationmark.triangle.fill")
+            return
+        }
+        recordUndoSnapshot(actionName: targets.count > 1 ? "Paste Config to \(targets.count) Controls" : "Paste Config")
+        var notesToSend: [(note: UInt8, velocity: UInt8)] = []
+        for idx in targets where idx < controls.count {
+            clip.apply(to: &controls[idx])
+            if controls[idx].hasLED {
+                notesToSend.append((note: controls[idx].number, velocity: controls[idx].currentLED))
+            }
+        }
+        if !notesToSend.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: notesToSend)
+        }
+        saveCurrentSlot()
+        showToast(targets.count > 1 ? "PASTED TO \(targets.count) CONTROLS" : "PASTED TO \(controls[targets[0]].label)", icon: "doc.badge.arrow.up.fill")
+        log("📋 Pasted configuration to \(targets.count) control(s)")
+        SoundEffect.keyTap.play(with: soundPack)
+    }
+
+    func duplicateControl(at index: Int? = nil) {
+        let idx = index ?? selectedIndex
+        guard idx >= 0 && idx < controls.count else { return }
+        let clip = ControlClipboardData(from: controls[idx])
+        self.copiedControlConfig = clip
+        let target = min(controls.count - 1, idx + 1)
+        if target != idx {
+            recordUndoSnapshot(actionName: "Duplicate \(controls[idx].label)")
+            clip.apply(to: &controls[target])
+            if controls[target].hasLED {
+                sendNoteOn(note: controls[target].number, velocity: controls[target].currentLED)
+            }
+            selectedIndex = target
+            saveCurrentSlot()
+            showToast("DUPLICATED TO \(controls[target].label)", icon: "plus.square.on.square.fill")
+            SoundEffect.keyTap.play(with: soundPack)
+        }
+    }
+
+    @inlinable
+    func duplicateControl(index: Int) {
+        duplicateControl(at: index)
+    }
+
+    func copyColor(at index: Int? = nil) {
+        let idx = index ?? selectedIndex
+        guard idx >= 0 && idx < controls.count else { return }
+        let vel = controls[idx].activeVelocity > 0 ? controls[idx].activeVelocity : controls[idx].idleVelocity
+        copiedColorVelocity = vel
+        showToast("COPIED COLOR: \(BitchBoyHardwareColor.formattedLabel(for: vel))", icon: "paintpalette.fill")
+        log("🎨 Copied LED color: \(BitchBoyHardwareColor.formattedLabel(for: vel)) (Vel #\(vel))")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    @inlinable
+    func copySelectedColor(index: Int? = nil) {
+        copyColor(at: index)
+    }
+
+    func pasteColor(to targetIndex: Int) {
+        guard targetIndex >= 0 && targetIndex < controls.count, controls[targetIndex].hasLED else { return }
+        guard let vel = copiedColorVelocity else {
+            showToast("NO COLOR COPIED", icon: "exclamationmark.triangle.fill")
+            return
+        }
+        recordUndoSnapshot(actionName: "Paste Color to \(controls[targetIndex].label)")
+        controls[targetIndex].activeVelocity = vel
+        controls[targetIndex].idleVelocity = vel
+        controls[targetIndex].currentLED = vel
+        sendNoteOn(note: controls[targetIndex].number, velocity: vel)
+        saveCurrentSlot()
+        showToast("PASTED COLOR: \(BitchBoyHardwareColor.formattedLabel(for: vel))", icon: "paintbrush.fill")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    func pasteColorToSelected() {
+        guard let vel = copiedColorVelocity else {
+            showToast("NO COLOR COPIED", icon: "exclamationmark.triangle.fill")
+            return
+        }
+        let targets = selectedIndices.isEmpty ? [selectedIndex] : Array(selectedIndices)
+        let ledTargets = targets.filter { $0 < controls.count && controls[$0].hasLED }
+        guard !ledTargets.isEmpty else { return }
+        recordUndoSnapshot(actionName: ledTargets.count > 1 ? "Paste Color to \(ledTargets.count) Keys" : "Paste Color")
+        var notesToSend: [(note: UInt8, velocity: UInt8)] = []
+        for idx in ledTargets {
+            controls[idx].activeVelocity = vel
+            controls[idx].idleVelocity = vel
+            controls[idx].currentLED = vel
+            notesToSend.append((note: controls[idx].number, velocity: vel))
+        }
+        if !notesToSend.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: notesToSend)
+        }
+        saveCurrentSlot()
+        showToast(ledTargets.count > 1 ? "PASTED COLOR TO \(ledTargets.count) KEYS" : "PASTED COLOR", icon: "paintbrush.fill")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    func resetControl(at index: Int? = nil) {
+        let idx = index ?? selectedIndex
+        guard idx >= 0 && idx < controls.count else { return }
+        let defaultSlot = Self.buildDefault8MemorySlots()[0]
+        guard idx < defaultSlot.controls.count else { return }
+        recordUndoSnapshot(actionName: "Reset \(controls[idx].label)")
+        controls[idx] = defaultSlot.controls[idx]
+        if controls[idx].hasLED {
+            sendNoteOn(note: controls[idx].number, velocity: controls[idx].currentLED)
+        }
+        saveCurrentSlot()
+        showToast("RESET \(controls[idx].label) TO DEFAULT", icon: "arrow.counterclockwise.circle.fill")
+        log("🔄 Reset \(controls[idx].label) to default factory mapping")
+        SoundEffect.keyTap.play(with: soundPack)
+    }
+
+    @inlinable
+    func resetControl(index: Int) {
+        resetControl(at: index)
+    }
+
+    func resetSelectedControls() {
+        let targets = selectedIndices.isEmpty ? [selectedIndex] : Array(selectedIndices)
+        guard !targets.isEmpty else { return }
+        let defaultSlot = Self.buildDefault8MemorySlots()[0]
+        recordUndoSnapshot(actionName: targets.count > 1 ? "Reset \(targets.count) Controls" : "Reset Control")
+        var notesToSend: [(note: UInt8, velocity: UInt8)] = []
+        for idx in targets where idx < controls.count && idx < defaultSlot.controls.count {
+            controls[idx] = defaultSlot.controls[idx]
+            if controls[idx].hasLED {
+                notesToSend.append((note: controls[idx].number, velocity: controls[idx].currentLED))
+            }
+        }
+        if !notesToSend.isEmpty && isConnected && bitchBoyDestination != 0 {
+            sendBatchNoteOn(notesAndVelocities: notesToSend)
+        }
+        saveCurrentSlot()
+        showToast(targets.count > 1 ? "RESET \(targets.count) CONTROLS" : "RESET CONTROL", icon: "arrow.counterclockwise.circle.fill")
+        log("🔄 Reset \(targets.count) control(s) to factory defaults")
+        SoundEffect.keyTap.play(with: soundPack)
+    }
+
+    func selectAllOfKind(_ kind: ControlKind) {
+        let matches = controls.indices.filter { controls[$0].kind == kind }
+        selectedIndices = Set(matches)
+        showToast("SELECTED ALL \(matches.count) \(kind.rawValue)s", icon: "square.grid.2x2.fill")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    func copyCurrentFXFrame() {
+        guard editingCustomFX.frames.indices.contains(editingFrameIndex) else { return }
+        copiedFXFrame = editingCustomFX.frames[editingFrameIndex]
+        showToast("COPIED FX FRAME #\(editingFrameIndex + 1)", icon: "doc.on.doc.fill")
+        log("📋 Copied Custom FX Frame #\(editingFrameIndex + 1)")
+        SoundEffect.knobTick.play(with: soundPack)
+    }
+
+    func pasteFXFrame() {
+        guard let frame = copiedFXFrame else {
+            showToast("NO FRAME COPIED", icon: "exclamationmark.triangle.fill")
+            return
+        }
+        recordUndoSnapshot(actionName: "Paste FX Frame")
+        if editingCustomFX.frames.indices.contains(editingFrameIndex) {
+            editingCustomFX.frames[editingFrameIndex] = frame
+        } else {
+            editingCustomFX.frames.append(frame)
+            editingFrameIndex = editingCustomFX.frames.count - 1
+        }
+        saveCustomEffectsToDisk()
+        previewCurrentCustomFrameOnHardware()
+        showToast("PASTED FX FRAME #\(editingFrameIndex + 1)", icon: "doc.badge.arrow.up.fill")
+        log("📋 Pasted Custom FX Frame onto #\(editingFrameIndex + 1)")
+        SoundEffect.keyTap.play(with: soundPack)
+    }
+
+    // MARK: - 120 FPS Target & High-Rate Performance Configuration
+    func setTargetFPS(_ fps: Int) {
+        targetFPS = (fps == 60) ? 60 : 120
+        UserDefaults.standard.set(targetFPS, forKey: "BitchBoy_TargetFPS_v1")
+        if reactiveFXTimer != nil {
+            stopReactiveTimer()
+            startReactiveTimerIfNeeded()
+        }
+        if isPlayingCustomFX {
+            playCustomEffect(editingCustomFX)
+        }
+        showToast("ENGINE SET TO \(targetFPS) FPS PROMOTION", icon: "bolt.fill")
+        log("⚡️ Graphics & Lighting Engine Frame Rate set to \(targetFPS) FPS")
+        SoundEffect.knobTick.play(with: soundPack)
     }
 
     private func loadFromDisk() {
@@ -6692,8 +8080,11 @@ final class BitchBoyEngine: ObservableObject {
 
     func log(_ msg: String) {
         let ts = Self.logDateFormatter.string(from: Date())
-        midiLogs.insert("[\(ts)] \(msg)", at: 0)
-        if midiLogs.count > 40 { midiLogs.removeLast() }
+        pendingLogLines.append("[\(ts)] \(msg)")
+        if pendingLogLines.count > Self.maxLogLines {
+            pendingLogLines.removeFirst(pendingLogLines.count - Self.maxLogLines)
+        }
+        scheduleTelemetryFlush()
     }
 }
 
@@ -6706,13 +8097,14 @@ struct HoverGrowModifier: ViewModifier {
     var lift: CGFloat = 0.0
     var brightnessBoost: Double = 0.03
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isHovered ? scale : 1.0)
-            .offset(y: isHovered ? -lift : 0)
+            .scaleEffect((isHovered && !reduceMotion) ? scale : 1.0)
+            .offset(y: (isHovered && !reduceMotion) ? -lift : 0)
             .brightness(isHovered ? brightnessBoost : 0.0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isHovered)
+            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.72), value: isHovered)
             .onHover { hovering in
                 isHovered = hovering
             }
@@ -6750,6 +8142,7 @@ struct ScrewRivetView: View {
                 .fill(Color(white: 0.18))
                 .frame(width: 1.2, height: size * 0.65)
         }
+        .accessibilityHidden(true)
     }
 }
 
@@ -6759,11 +8152,12 @@ struct BitchBoyOfficialMascotView: View {
 
     @State private var isHovered = false
     @State private var isPressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var mascotNSImage: NSImage? {
         if let img = NSImage(named: "BitchBoyMascot") { return img }
-        if let img = NSImage(contentsOfFile: "/Users/taylorfossen/Documents/BB/BB/Assets.xcassets/BitchBoyMascot.imageset/bitchboy.png") { return img }
-        if let img = NSImage(contentsOfFile: "/Users/taylorfossen/Downloads/DRAFT BITCHBOY_files/bitchboy.png") { return img }
+        if let url = Bundle.main.url(forResource: "bitchboy", withExtension: "png"),
+           let img = NSImage(contentsOf: url) { return img }
         return nil
     }
 
@@ -6781,24 +8175,27 @@ struct BitchBoyOfficialMascotView: View {
                         .interpolation(.none) // Keep crisp pixel art edge
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 160, height: 160) // 2x bigger than the old 80x80 fit!
+                        .frame(width: 124, height: 70)
                         .blendMode(.screen) // Melts any dark background into the PCB
-                        .shadow(color: auraColor.opacity(isHovered ? 1.0 : 0.85), radius: isHovered ? 10 : 8)
-                        .shadow(color: auraColor.opacity(isHovered ? 0.75 : 0.45), radius: isHovered ? 22 : 18)
+                        .shadow(color: auraColor.opacity(isHovered ? 1.0 : 0.85), radius: isHovered ? 10 : 7)
+                        .shadow(color: auraColor.opacity(isHovered ? 0.70 : 0.40), radius: isHovered ? 18 : 12)
                 } else {
                     Image(systemName: "gamecontroller.fill")
-                        .font(.system(size: 64))
+                        .font(.system(size: 42))
                         .foregroundColor(auraColor)
                         .shadow(color: auraColor.opacity(0.85), radius: 8)
                 }
             }
-            .frame(width: 186, height: 96)
-            .scaleEffect(isPressed ? 0.94 : (isHovered ? 1.06 : 1.0))
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPressed)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+            // Tall enough for the 70pt art at peak bounce (1.1 pop × 1.06 hover ≈ 82pt), so it never overlaps neighbors.
+            .frame(width: 226, height: 84)
+            .scaleEffect((isPressed && !reduceMotion) ? 0.94 : ((isHovered && !reduceMotion) ? 1.06 : 1.0))
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.6), value: isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
             .onHover { h in isHovered = h }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("BitchBoy Mascot")
+        .accessibilityHint("Click to trigger mascot interaction sound")
     }
 }
 
@@ -6808,11 +8205,12 @@ struct BitchBoyGlowingLogoView: View {
 
     @State private var isHovered = false
     @State private var isPressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var logoNSImage: NSImage? {
         if let img = NSImage(named: "BitchBoyWordLogo") { return img }
-        if let img = NSImage(contentsOfFile: "/Users/taylorfossen/Documents/BB/BB/Assets.xcassets/BitchBoyWordLogo.imageset/bitchboy_logo.png") { return img }
-        if let img = NSImage(contentsOfFile: "/Users/taylorfossen/Downloads/Bitchboy23.png") { return img }
+        if let url = Bundle.main.url(forResource: "bitchboy_logo", withExtension: "png"),
+           let img = NSImage(contentsOf: url) { return img }
         return nil
     }
 
@@ -6830,22 +8228,27 @@ struct BitchBoyGlowingLogoView: View {
                         .interpolation(.high)
                         .resizable()
                         .scaledToFit()
+                        .padding(.horizontal, 6)
                         .blendMode(.screen)
-                        .shadow(color: auraColor.opacity(isHovered ? 1.0 : 0.85), radius: isHovered ? 10 : 8)
-                        .shadow(color: auraColor.opacity(isHovered ? 0.75 : 0.45), radius: isHovered ? 22 : 18)
+                        .shadow(color: auraColor.opacity(isHovered ? 1.0 : 0.85), radius: isHovered ? 8 : 6)
+                        .shadow(color: auraColor.opacity(isHovered ? 0.65 : 0.35), radius: isHovered ? 16 : 12)
                 } else {
                     Text("BiTCHBOY")
-                        .font(.system(size: 24, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 22, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                         .shadow(color: auraColor.opacity(0.85), radius: 8)
                 }
             }
-            .scaleEffect(isPressed ? 0.94 : (isHovered ? 1.06 : 1.0))
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPressed)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .scaleEffect((isPressed && !reduceMotion) ? 0.95 : ((isHovered && !reduceMotion) ? 1.03 : 1.0))
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.6), value: isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
             .onHover { h in isHovered = h }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityLabel("BitchBoy Logo")
+        .accessibilityHint("Click to trigger logo interaction sound")
     }
 }
 
@@ -6854,9 +8257,12 @@ struct HardwareKeyCap: View, Equatable {
     let isSelected: Bool
     let color: Color
     let sectionBorder: Color
+    var keyWidth: CGFloat = 52
+    var keyHeight: CGFloat = 45
     let onTap: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var isLit: Bool { item.currentLED > 0 }
 
@@ -6873,40 +8279,74 @@ struct HardwareKeyCap: View, Equatable {
                lhs.item.qwertySteps.first?.ctrl == rhs.item.qwertySteps.first?.ctrl &&
                lhs.isSelected == rhs.isSelected &&
                lhs.color == rhs.color &&
-               lhs.sectionBorder == rhs.sectionBorder
+               lhs.sectionBorder == rhs.sectionBorder &&
+               lhs.keyWidth == rhs.keyWidth &&
+               lhs.keyHeight == rhs.keyHeight
     }
 
     var body: some View {
-        Button(action: onTap) {
+        Button(action: {
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            onTap()
+        }) {
             ZStack {
-                // Base background
+                // Keycap Base: Precision milled dark obsidian keycap with satin sheen
                 RoundedRectangle(cornerRadius: 6)
                     .fill(
                         LinearGradient(
                             colors: isLit
-                                ? [color.opacity(0.85), color.opacity(0.40)]
-                                : [Color(red: 0.18, green: 0.08, blue: 0.08), Color(red: 0.12, green: 0.05, blue: 0.05)],
+                                ? [color.opacity(0.92), color.opacity(0.50)]
+                                : [Color(red: 0.16, green: 0.18, blue: 0.21), Color(red: 0.08, green: 0.09, blue: 0.11)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
 
-                // Key face bezel
+                // Top chamfer specular light reflection edge
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(isLit ? 0.38 : 0.18), Color.clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+
+                // Ambient LED halo underglow when active
+                if isLit {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            RadialGradient(
+                                colors: [color.opacity(0.48), Color.clear],
+                                center: .center,
+                                startRadius: 2,
+                                endRadius: 24
+                            )
+                        )
+                }
+
+                // Key Face Bezel with sharp selection border
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(
                         isSelected
                             ? Color(red: 0.22, green: 0.96, blue: 0.76)
-                            : (isHovered ? Color.white.opacity(0.9) : sectionBorder.opacity(0.85)),
-                        lineWidth: (isSelected || isHovered) ? 2.0 : 1.0
+                            : (isHovered ? Color.white.opacity(0.85) : sectionBorder.opacity(0.75)),
+                        lineWidth: (isSelected || isHovered) ? 1.8 : 0.9
                     )
-                    .shadow(color: isHovered ? (isLit ? color.opacity(0.95) : Color.white.opacity(0.4)) : (isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.8) : (isLit ? color.opacity(0.6) : .clear)), radius: isHovered ? 7 : (isLit ? 6 : 2))
+                    .shadow(
+                        color: isHovered
+                            ? (isLit ? color.opacity(0.9) : Color.white.opacity(0.35))
+                            : (isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.85) : (isLit ? color.opacity(0.55) : .clear)),
+                        radius: isHovered ? 5 : (isSelected ? 5 : (isLit ? 4 : 0))
+                    )
 
-                // Labels & Center Action Cross / QWERTY Shortcut Badge
+                // Labels & Center Action Icon / QWERTY Shortcut Badge
                 VStack(spacing: 0) {
                     Text(item.customName.isEmpty ? item.label : item.customName)
-                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                        .foregroundColor(isLit ? .white : Color(white: 0.88))
-                        .padding(.top, 2)
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .foregroundColor(isLit ? .white : Color(white: 0.92))
+                        .padding(.top, 2.5)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
@@ -6930,41 +8370,46 @@ struct HardwareKeyCap: View, Equatable {
                                 }
                             }()
                             Text(modPrefix + keyDisp)
-                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                                 .foregroundColor(.black)
                                 .lineLimit(1)
-                                .padding(.horizontal, 3)
+                                .padding(.horizontal, 3.5)
                                 .padding(.vertical, 1.5)
                                 .background(Color(red: 0.98, green: 0.78, blue: 0.25))
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         } else {
                             Circle()
-                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
                                 .frame(width: 14, height: 14)
 
                             Image(systemName: actionIconName(item.actionType))
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(isLit ? .white : Color(white: 0.75))
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(isLit ? .white : Color(white: 0.80))
                         }
                     }
 
                     Spacer(minLength: 0)
 
                     Text("N\(item.number)")
-                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
-                        .foregroundColor(isLit ? .white.opacity(0.95) : Color(white: 0.78))
-                        .padding(.bottom, 2)
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        .foregroundColor(isLit ? .white.opacity(0.95) : (isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(white: 0.70)))
+                        .padding(.bottom, 2.5)
                 }
             }
-            .frame(width: 44, height: 40)
-            .scaleEffect(item.isPressed ? 0.92 : (isHovered ? 1.08 : 1.0))
-            .animation(.spring(response: 0.18, dampingFraction: 0.65), value: isHovered)
-            .animation(.spring(response: 0.15, dampingFraction: 0.6), value: item.isPressed)
+            .frame(width: keyWidth, height: keyHeight)
+            .scaleEffect((item.isPressed && !reduceMotion) ? 0.93 : ((isHovered && !reduceMotion) ? 1.04 : 1.0))
+            .offset(y: (item.isPressed && !reduceMotion) ? 1.5 : 0)
+            .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.65), value: isHovered)
+            .animation(reduceMotion ? nil : .spring(response: 0.15, dampingFraction: 0.6), value: item.isPressed)
             .onHover { hovering in
                 isHovered = hovering
             }
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.customName.isEmpty ? item.label : item.customName)
+        .accessibilityValue("Note \(item.number), \(isLit ? "Lit" : "Off"), \(item.actionType.rawValue)")
+        .accessibilityHint("Click to trigger key")
     }
 
     private func actionIconName(_ type: ActionType) -> String {
@@ -6983,88 +8428,253 @@ struct HardwareKeyCap: View, Equatable {
 struct HardwareVerticalFader: View, Equatable {
     let item: ControlItem
     let isSelected: Bool
+    var faderWidth: CGFloat = 52
+    var faderHeight: CGFloat = 210
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
+
+    @State private var isDragging: Bool = false
+    @State private var lastSentVal: UInt8? = nil
 
     static func == (lhs: HardwareVerticalFader, rhs: HardwareVerticalFader) -> Bool {
         return lhs.item.number == rhs.item.number &&
                lhs.item.liveValue == rhs.item.liveValue &&
-               lhs.isSelected == rhs.isSelected
+               lhs.isSelected == rhs.isSelected &&
+               lhs.faderWidth == rhs.faderWidth &&
+               lhs.faderHeight == rhs.faderHeight
+    }
+
+    private var dbReadout: String {
+        if item.liveValue == 0 { return "-∞ dB" }
+        if item.liveValue >= 126 { return "+6.0 dB" }
+        let ratio = Double(item.liveValue) / 100.0
+        let db = 20.0 * log10(max(0.01, ratio))
+        return String(format: "%+.1f dB", min(6.0, db))
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(item.label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.85))
+        VStack(spacing: 3) {
+            // Channel Header: Label & Live dB Readout
+            VStack(spacing: 1) {
+                Text(item.label)
+                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(white: 0.90))
 
-            // Vertical Track & Cap
+                Text(dbReadout)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.55))
+            }
+            .frame(width: faderWidth - 4)
+            .padding(.vertical, 2)
+            .background(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.18) : Color.white.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+
+            // Precision Fader Track with Decibel Markings & VU Level Ladder
             GeometryReader { geo in
-                let trackHeight = geo.size.height - 20
+                let slotHeight = max(30, geo.size.height)
+                let capHeight: CGFloat = 20
+                let travel = max(10, slotHeight - capHeight)
                 let normalizedVal = CGFloat(item.liveValue) / 127.0
-                let capY = (1.0 - normalizedVal) * trackHeight
+                let capOffsetFromTop = (1.0 - normalizedVal) * travel
 
-                ZStack(alignment: .top) {
-                    // Recessed slot
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(red: 0.02, green: 0.04, blue: 0.04))
-                        .frame(width: 6, height: geo.size.height)
-                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                HStack(spacing: 2) {
+                    // Left Decibel Scale Markings
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("+6").font(.system(size: 6.5, weight: .bold, design: .monospaced)).foregroundColor(Color(white: 0.70))
+                        Spacer()
+                        HStack(spacing: 1) {
+                            Text("0").font(.system(size: 7, weight: .heavy, design: .monospaced)).foregroundColor(Color(red: 0.22, green: 0.96, blue: 0.76))
+                            Rectangle().fill(Color(red: 0.22, green: 0.96, blue: 0.76)).frame(width: 3.5, height: 1)
+                        }
+                        Spacer()
+                        Text("-6").font(.system(size: 6.5, weight: .bold, design: .monospaced)).foregroundColor(Color(white: 0.65))
+                        Spacer()
+                        Text("-12").font(.system(size: 6.5, weight: .bold, design: .monospaced)).foregroundColor(Color(white: 0.65))
+                        Spacer()
+                        Text("-24").font(.system(size: 6.5, weight: .bold, design: .monospaced)).foregroundColor(Color(white: 0.60))
+                        Spacer()
+                        Text("-∞").font(.system(size: 7, weight: .heavy, design: .monospaced)).foregroundColor(Color(white: 0.70))
+                    }
+                    .frame(width: 13)
+                    .padding(.vertical, 6)
 
-                    // Coral Rectangular Fader Cap
-                    ZStack {
+                    // Recessed Center Track Slot with Level / VU Fill & Full-Throw Cap
+                    ZStack(alignment: .top) {
+                        // Recessed dark well
                         RoundedRectangle(cornerRadius: 3)
                             .fill(
                                 LinearGradient(
-                                    colors: [
-                                        Color(red: 0.98, green: 0.52, blue: 0.44),
-                                        Color(red: 0.85, green: 0.32, blue: 0.28)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
+                                    colors: [Color(red: 0.02, green: 0.03, blue: 0.04), Color(red: 0.05, green: 0.06, blue: 0.08)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
                                 )
                             )
-                            .frame(width: 22, height: 18)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.35), lineWidth: 1))
-                            .shadow(color: .black.opacity(0.8), radius: 3, x: 1, y: 1)
+                            .frame(width: 7, height: slotHeight)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.16), lineWidth: 0.8))
 
-                        // Center white notch line
-                        Rectangle()
-                            .fill(Color.white.opacity(0.85))
-                            .frame(width: 14, height: 1.5)
+                        // Active Glowing Level Bar rising from bottom
+                        VStack {
+                            Spacer()
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.98, green: 0.35, blue: 0.35),
+                                            Color(red: 0.96, green: 0.76, blue: 0.18),
+                                            Color(red: 0.22, green: 0.96, blue: 0.65)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .frame(width: 3.5, height: max(0, normalizedVal * (slotHeight - 4)))
+                                .padding(.bottom, 2)
+                                .opacity(0.85)
+                        }
+                        .frame(width: 7, height: slotHeight)
+
+                        // Studio Aluminum Fader Cap (Goes all the way up to top edge at 127)
+                        ZStack {
+                            // Cap outer body with metallic chamfer
+                            RoundedRectangle(cornerRadius: 3.5)
+                                .fill(
+                                    LinearGradient(
+                                        colors: isSelected
+                                            ? [Color(red: 0.32, green: 0.37, blue: 0.40), Color(red: 0.17, green: 0.19, blue: 0.22)]
+                                            : [Color(red: 0.26, green: 0.28, blue: 0.31), Color(red: 0.13, green: 0.14, blue: 0.16)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .frame(width: 26, height: capHeight)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3.5)
+                                        .stroke(
+                                            isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color.white.opacity(0.35),
+                                            lineWidth: isSelected ? 1.5 : 0.8
+                                        )
+                                )
+                                .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 2)
+
+                            // Horizontal finger grip ribs
+                            VStack(spacing: 2.5) {
+                                Rectangle().fill(Color.white.opacity(0.20)).frame(width: 16, height: 1)
+                                Rectangle().fill(Color.white.opacity(0.20)).frame(width: 16, height: 1)
+                            }
+
+                            // Center high-contrast index line
+                            Rectangle()
+                                .fill(
+                                    isSelected
+                                        ? Color(red: 0.22, green: 0.96, blue: 0.76)
+                                        : Color(red: 0.98, green: 0.52, blue: 0.44)
+                                )
+                                .frame(width: 20, height: 2)
+                                .shadow(color: isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(red: 0.98, green: 0.52, blue: 0.44), radius: 2)
+                        }
+                        .frame(width: 26, height: capHeight)
+                        .offset(y: capOffsetFromTop)
                     }
-                    .offset(y: capY)
+                    .frame(width: 26, height: slotHeight)
+
+                    // Right side tick marks
+                    VStack(alignment: .leading, spacing: 0) {
+                        Rectangle().fill(Color.white.opacity(0.25)).frame(width: 3, height: 1)
+                        Spacer()
+                        Rectangle().fill(Color(red: 0.22, green: 0.96, blue: 0.76)).frame(width: 4.5, height: 1.2)
+                        Spacer()
+                        Rectangle().fill(Color.white.opacity(0.20)).frame(width: 3, height: 1)
+                        Spacer()
+                        Rectangle().fill(Color.white.opacity(0.18)).frame(width: 3, height: 1)
+                        Spacer()
+                        Rectangle().fill(Color.white.opacity(0.15)).frame(width: 3, height: 1)
+                        Spacer()
+                        Rectangle().fill(Color.white.opacity(0.20)).frame(width: 3, height: 1)
+                    }
+                    .frame(width: 5)
+                    .padding(.vertical, 6)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { gesture in
-                            onSelect()
-                            let clampedY = min(max(0, gesture.location.y - 9), trackHeight)
-                            let inverted = 1.0 - (clampedY / trackHeight)
-                            let newVal = UInt8(inverted * 127.0)
-                            onValueChange(newVal)
+                            if !isDragging {
+                                isDragging = true
+                                onSelect()
+                                NSApp.keyWindow?.makeFirstResponder(nil)
+                            }
+                            let clampedY = min(max(0, gesture.location.y - (capHeight / 2)), travel)
+                            let fraction = travel > 0 ? (1.0 - (clampedY / travel)) : 0
+                            let newVal: UInt8 = clampedY <= 0.5 ? 127 : (clampedY >= travel - 0.5 ? 0 : UInt8(min(127, max(0, Int(round(fraction * 127.0))))))
+                            if newVal != lastSentVal && newVal != item.liveValue {
+                                lastSentVal = newVal
+                                onValueChange(newVal)
+                            }
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                            lastSentVal = nil
                         }
                 )
             }
-            .frame(width: 42, height: 110)
+            .frame(width: faderWidth, height: max(60, faderHeight - 48))
 
-            Text("CC\(item.number)")
-                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
+            // Channel Footer (CC identifier & integer readout)
+            HStack(spacing: 2) {
+                Text("CC\(item.number)")
+                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
+
+                Text("\(item.liveValue)")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.65))
+            }
+            .padding(.vertical, 1.5)
+            .padding(.horizontal, 3)
+            .background(Color.black.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
         }
         .padding(.vertical, 4)
-        .padding(.horizontal, 2)
-        .background(isSelected ? Color.white.opacity(0.06) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .padding(.horizontal, 1)
+        .frame(width: faderWidth, height: faderHeight)
+        .background(isSelected ? Color.white.opacity(0.06) : Color.black.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.65) : Color.white.opacity(0.06), lineWidth: 1)
+        )
         .onTapGesture(count: 2) {
-            onValueChange(0)
+            if item.liveValue == 100 {
+                onValueChange(0)
+            } else {
+                onValueChange(100)
+            }
         }
         .onTapGesture(count: 1) {
+            NSApp.keyWindow?.makeFirstResponder(nil)
             onSelect()
         }
-        .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to reset 0)")
+        .help("\(item.label) CC\(item.number): \(item.liveValue) (\(dbReadout)) - Double-click for Unity (100) / 0")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.label), Control Change \(item.number)")
+        .accessibilityValue("\(item.liveValue) out of 127, \(dbReadout)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                onValueChange(min(127, item.liveValue + 1))
+            case .decrement:
+                onValueChange(item.liveValue > 0 ? item.liveValue - 1 : 0)
+            @unknown default:
+                break
+            }
+        }
+        .accessibilityAction(named: "Set to Unity Gain (100)") {
+            onValueChange(100)
+        }
+        .accessibilityAction(named: "Reset to Zero") {
+            onValueChange(0)
+        }
     }
 }
 
@@ -7074,6 +8684,9 @@ struct HardwareHorizontalFader: View, Equatable {
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
 
+    @State private var isDragging: Bool = false
+    @State private var lastSentVal: UInt8? = nil
+
     static func == (lhs: HardwareHorizontalFader, rhs: HardwareHorizontalFader) -> Bool {
         return lhs.item.number == rhs.item.number &&
                lhs.item.liveValue == rhs.item.liveValue &&
@@ -7082,77 +8695,179 @@ struct HardwareHorizontalFader: View, Equatable {
 
     var body: some View {
         HStack(spacing: 8) {
+            // Channel Header Label (Matching Vertical Fader styling)
             Text(item.label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(isSelected ? Color(red: 0.38, green: 0.94, blue: 0.78) : Color(white: 0.85))
-                .frame(width: 28, alignment: .leading)
+                .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
+                .foregroundColor(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(white: 0.90))
+                .frame(width: 32, height: 22)
+                .background(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.18) : Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
 
+            // Precision Horizontal Track with Level Meter & Matching Brushed Aluminum Cap
             GeometryReader { geo in
-                let trackWidth = geo.size.width - 20
+                let trackWidth = max(30, geo.size.width)
+                let capWidth: CGFloat = 20
+                let capHeight: CGFloat = 26
+                let travel = max(10, trackWidth - capWidth)
                 let normalizedVal = CGFloat(item.liveValue) / 127.0
-                let capX = normalizedVal * trackWidth
+                let capOffsetFromLeft = normalizedVal * travel
 
                 ZStack(alignment: .leading) {
-                    // Recessed track
+                    // Recessed dark well track
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(red: 0.02, green: 0.04, blue: 0.04))
-                        .frame(height: 6)
-                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(red: 0.02, green: 0.03, blue: 0.04), Color(red: 0.05, green: 0.06, blue: 0.08)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: trackWidth, height: 7)
+                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.16), lineWidth: 0.8))
 
-                    // Coral Rectangular Fader Cap
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 3)
+                    // Active glowing level meter extending from left
+                    HStack {
+                        RoundedRectangle(cornerRadius: 2)
                             .fill(
                                 LinearGradient(
                                     colors: [
-                                        Color(red: 0.98, green: 0.52, blue: 0.44),
-                                        Color(red: 0.85, green: 0.32, blue: 0.28)
+                                        Color(red: 0.22, green: 0.96, blue: 0.65),
+                                        Color(red: 0.96, green: 0.76, blue: 0.18),
+                                        Color(red: 0.98, green: 0.35, blue: 0.35)
                                     ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: max(0, normalizedVal * (trackWidth - 4)), height: 3.5)
+                            .padding(.leading, 2)
+                            .opacity(0.85)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(width: trackWidth, height: 7)
+
+                    // Studio Aluminum Fader Cap (Exact same theme as Vertical Fader)
+                    ZStack {
+                        // Cap outer body with metallic chamfer
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(
+                                LinearGradient(
+                                    colors: isSelected
+                                        ? [Color(red: 0.32, green: 0.37, blue: 0.40), Color(red: 0.17, green: 0.19, blue: 0.22)]
+                                        : [Color(red: 0.26, green: 0.28, blue: 0.31), Color(red: 0.13, green: 0.14, blue: 0.16)],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
                             )
-                            .frame(width: 18, height: 22)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.35), lineWidth: 1))
-                            .shadow(color: .black.opacity(0.8), radius: 3, x: 1, y: 1)
+                            .frame(width: capWidth, height: capHeight)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 3.5)
+                                    .stroke(
+                                        isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color.white.opacity(0.35),
+                                        lineWidth: isSelected ? 1.5 : 0.8
+                                    )
+                            )
+                            .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 2)
 
-                        // Center black notch line
+                        // Vertical finger grip ribs (perpendicular to throw direction)
+                        HStack(spacing: 2.5) {
+                            Rectangle().fill(Color.white.opacity(0.20)).frame(width: 1, height: 16)
+                            Rectangle().fill(Color.white.opacity(0.20)).frame(width: 1, height: 16)
+                        }
+
+                        // Center high-contrast index line
                         Rectangle()
-                            .fill(Color.black.opacity(0.75))
-                            .frame(width: 1.5, height: 16)
+                            .fill(
+                                isSelected
+                                    ? Color(red: 0.22, green: 0.96, blue: 0.76)
+                                    : Color(red: 0.98, green: 0.52, blue: 0.44)
+                            )
+                            .frame(width: 2, height: 20)
+                            .shadow(color: isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(red: 0.98, green: 0.52, blue: 0.44), radius: 2)
                     }
-                    .offset(x: capX)
+                    .frame(width: capWidth, height: capHeight)
+                    .offset(x: capOffsetFromLeft)
                 }
-                .frame(maxHeight: .infinity, alignment: .center)
+                .frame(width: trackWidth, height: 28)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { gesture in
-                            onSelect()
-                            let clampedX = min(max(0, gesture.location.x - 9), trackWidth)
-                            let newVal = UInt8((clampedX / trackWidth) * 127.0)
-                            onValueChange(newVal)
+                            if !isDragging {
+                                isDragging = true
+                                onSelect()
+                                NSApp.keyWindow?.makeFirstResponder(nil)
+                            }
+                            let clampedX = min(max(0, gesture.location.x - (capWidth / 2)), travel)
+                            let fraction = travel > 0 ? (clampedX / travel) : 0
+                            let newVal: UInt8 = clampedX >= travel - 0.5 ? 127 : (clampedX <= 0.5 ? 0 : UInt8(min(127, max(0, Int(round(fraction * 127.0))))))
+                            if newVal != lastSentVal && newVal != item.liveValue {
+                                lastSentVal = newVal
+                                onValueChange(newVal)
+                            }
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                            lastSentVal = nil
                         }
                 )
             }
-            .frame(height: 24)
+            .frame(height: 28)
 
-            Text("CC\(item.number)")
-                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
-                .frame(width: 36, alignment: .trailing)
+            // Channel Footer Badge (Matching Vertical Fader styling)
+            HStack(spacing: 2) {
+                Text("CC\(item.number)")
+                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
+
+                Text("\(item.liveValue)")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.65))
+            }
+            .padding(.vertical, 1.5)
+            .padding(.horizontal, 4)
+            .background(Color.black.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .frame(width: 48, alignment: .trailing)
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
-        .background(isSelected ? Color.white.opacity(0.06) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .background(isSelected ? Color.white.opacity(0.06) : Color.black.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.65) : Color.white.opacity(0.06), lineWidth: 1)
+        )
         .onTapGesture(count: 2) {
             onValueChange(0)
         }
         .onTapGesture(count: 1) {
+            NSApp.keyWindow?.makeFirstResponder(nil)
             onSelect()
         }
         .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to reset 0)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.label), Control Change \(item.number)")
+        .accessibilityValue("\(item.liveValue) out of 127")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                onValueChange(min(127, item.liveValue + 1))
+            case .decrement:
+                onValueChange(item.liveValue > 0 ? item.liveValue - 1 : 0)
+            @unknown default:
+                break
+            }
+        }
+        .accessibilityAction(named: "Reset to Zero") {
+            onValueChange(0)
+        }
+        .accessibilityAction(named: "Center to 64") {
+            onValueChange(64)
+        }
+        .accessibilityAction(named: "Set to Maximum 127") {
+            onValueChange(127)
+        }
     }
 }
 
@@ -7161,6 +8876,8 @@ struct HardwareKnob: View, Equatable {
     let isSelected: Bool
     let onSelect: () -> Void
     let onValueChange: (UInt8) -> Void
+
+    @State private var dragInitialValue: Double? = nil
 
     static func == (lhs: HardwareKnob, rhs: HardwareKnob) -> Bool {
         return lhs.item.number == rhs.item.number &&
@@ -7197,20 +8914,30 @@ struct HardwareKnob: View, Equatable {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        onSelect()
-                        let delta = -gesture.translation.height / 100.0
-                        let current = Double(item.liveValue) / 127.0
-                        let clamped = min(max(0.0, current + delta * 0.05), 1.0)
-                        onValueChange(UInt8(clamped * 127.0))
+                        if dragInitialValue == nil {
+                            onSelect()
+                            NSApp.keyWindow?.makeFirstResponder(nil)
+                            dragInitialValue = Double(item.liveValue) / 127.0
+                        }
+                        let start = dragInitialValue ?? (Double(item.liveValue) / 127.0)
+                        let delta = -Double(gesture.translation.height) / 140.0
+                        let clamped = min(max(0.0, start + delta), 1.0)
+                        let newVal = UInt8(round(clamped * 127.0))
+                        if newVal != item.liveValue {
+                            onValueChange(newVal)
+                        }
+                    }
+                    .onEnded { _ in
+                        dragInitialValue = nil
                     }
             )
 
             HStack(spacing: 3) {
                 Text(item.label)
-                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(isSelected ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(red: 0.45, green: 0.88, blue: 0.75))
                 Text("CC\(item.number)")
-                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.38))
             }
         }
@@ -7220,9 +8947,32 @@ struct HardwareKnob: View, Equatable {
             onValueChange(64) // Center knob to 64!
         }
         .onTapGesture(count: 1) {
+            NSApp.keyWindow?.makeFirstResponder(nil)
             onSelect()
         }
         .help("\(item.label) CC\(item.number): \(item.liveValue) (Double-click to center 64)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.label), Control Change \(item.number)")
+        .accessibilityValue("\(item.liveValue) out of 127")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                onValueChange(min(127, item.liveValue + 1))
+            case .decrement:
+                onValueChange(item.liveValue > 0 ? item.liveValue - 1 : 0)
+            @unknown default:
+                break
+            }
+        }
+        .accessibilityAction(named: "Center to 64") {
+            onValueChange(64)
+        }
+        .accessibilityAction(named: "Reset to Zero") {
+            onValueChange(0)
+        }
+        .accessibilityAction(named: "Set to Maximum 127") {
+            onValueChange(127)
+        }
     }
 }
 
@@ -7354,7 +9104,7 @@ struct ZoneDropDelegate: DropDelegate {
 }
 
 struct DetachedModuleWindowHostView: View {
-    @ObservedObject var engine: BitchBoyEngine
+    let engine: BitchBoyEngine
     let module: StudioModuleID
 
     var body: some View {
@@ -7362,17 +9112,417 @@ struct DetachedModuleWindowHostView: View {
     }
 }
 
+// ============================================================================
+// PER-CONTROL MAPPING & ASSIGNMENT EDITOR (RIGHT-CLICK → EDIT MAPPING)
+// ============================================================================
+
+/// Identifies which control the mapping editor sheet is presenting.
+struct ControlMappingTarget: Identifiable {
+    let id: Int
+}
+
+/// Sheet for viewing and editing a single control's mapping: hardware identity,
+/// LED feedback, and the action it triggers (QWERTY, OSC, MSC, AppleScript, DMX).
+struct ControlMappingEditorView: View {
+    @Bindable var engine: BitchBoyEngine
+    let index: Int
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if index >= 0 && index < engine.controls.count {
+                let item = engine.controls[index]
+                header(for: item)
+                Divider()
+                Form {
+                    identitySection(for: item)
+                    if item.hasLED {
+                        feedbackSection(for: item)
+                    }
+                    actionSection(for: item)
+                    if item.actionType == .osc || item.oscEnabled {
+                        oscSection(for: item)
+                    }
+                }
+                .formStyle(.grouped)
+            } else {
+                Text("This control is no longer available.")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Divider()
+            footer
+        }
+        .frame(width: 520, height: 620)
+    }
+
+    // MARK: - Layout
+
+    private func header(for item: ControlItem) -> some View {
+        HStack(spacing: 10) {
+            if item.hasLED {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(BitchBoyHardwareColor.color(for: item.idleVelocity))
+                    .frame(width: 22, height: 22)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.3), lineWidth: 1))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.customName.isEmpty ? item.label : item.customName)
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                Text("\(kindTitle(item.kind)) · \(numberTitle(for: item)) · Zone \(item.zone)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button(role: .destructive) {
+                engine.resetControl(index: index)
+            } label: {
+                Text("Reset to Factory Default")
+            }
+            Spacer()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(12)
+    }
+
+    // MARK: - Sections
+
+    private func identitySection(for item: ControlItem) -> some View {
+        Section("Hardware Identity") {
+            LabeledContent("Hardware Label", value: item.label)
+            LabeledContent("Type", value: kindTitle(item.kind))
+            LabeledContent(item.kind == .key ? "MIDI Note" : "MIDI CC", value: "\(item.number)")
+            LabeledContent("Zone", value: item.zone)
+            if item.kind != .key {
+                LabeledContent("Live Value", value: "\(item.liveValue)")
+            }
+            TextField("Custom Name", text: field(\.customName, "Rename Control"), prompt: Text(item.label))
+        }
+    }
+
+    private func feedbackSection(for item: ControlItem) -> some View {
+        Section("LED Feedback") {
+            Picker("Feedback Mode", selection: field(\.feedbackMode, "Change Feedback Mode")) {
+                ForEach(FeedbackMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue.capitalized).tag(mode)
+                }
+            }
+            velocityRow("Idle Color", value: idleVelocityBinding)
+            velocityRow("Active Color", value: field(\.activeVelocity, "Change Active Color"))
+            if item.feedbackMode == .customVelocity {
+                velocityRow("Custom Feedback Color", value: field(\.feedbackCustomVelocity, "Change Feedback Color"))
+            }
+            Toggle("Invert Feedback", isOn: field(\.feedbackInvert, "Toggle Feedback Invert"))
+        }
+    }
+
+    private func actionSection(for item: ControlItem) -> some View {
+        Section("Action Assignment") {
+            Picker("Action", selection: field(\.actionType, "Change Action")) {
+                ForEach(ActionType.allCases, id: \.self) { type in
+                    Text(actionTitle(type)).tag(type)
+                }
+            }
+
+            switch item.actionType {
+            case .passthrough:
+                Text("Sends the raw MIDI message only. No extra action is triggered.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            case .qwerty:
+                qwertyStepsEditor(for: item)
+            case .osc:
+                EmptyView()
+            case .applescript:
+                TextEditor(text: field(\.appleScript, "Edit AppleScript"))
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 90)
+            case .msc:
+                Picker("MSC Command", selection: mscCommandBinding) {
+                    ForEach(MSCCommand.allCases) { command in
+                        Text(command.title).tag(command)
+                    }
+                }
+                TextField("Cue Number", text: field(\.mscCueNumber, "Edit MSC Cue"), prompt: Text("e.g. 12.5"))
+            case .artnet, .sacn:
+                Text("Broadcasts the full rig's DMX state using the global \(item.actionType == .artnet ? "Art-Net" : "sACN") settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if item.actionType != .osc {
+                Toggle("Also Send OSC", isOn: field(\.oscEnabled, "Toggle OSC Send"))
+            }
+        }
+    }
+
+    private func oscSection(for item: ControlItem) -> some View {
+        Section {
+            TextField("Host", text: field(\.oscHost, "Edit OSC Host"), prompt: Text(engine.customOSCHost))
+            TextField("Port", value: field(\.oscPort, "Edit OSC Port"), format: .number.grouping(.never))
+            TextField("Address", text: field(\.oscAddress, "Edit OSC Address"), prompt: Text("/bitchboy/key/\(index + 1)"))
+            Picker("Argument Type", selection: oscArgTypeBinding) {
+                ForEach(OSCArgumentType.allCases) { type in
+                    Text(type.label).tag(type)
+                }
+            }
+            if item.kind == .key {
+                TextField("Press Value", text: field(\.oscArgValue, "Edit OSC Value"))
+                Toggle("Send on Release", isOn: field(\.oscSendRelease, "Toggle OSC Release"))
+                if item.oscSendRelease {
+                    TextField("Release Value", text: field(\.oscReleaseVal, "Edit OSC Release Value"))
+                }
+            } else {
+                TextField("Range Min", value: field(\.oscMinVal, "Edit OSC Range"), format: .number)
+                TextField("Range Max", value: field(\.oscMaxVal, "Edit OSC Range"), format: .number)
+            }
+        } header: {
+            Text("OSC Output")
+        } footer: {
+            if !engine.midiToOSCMappingActive {
+                Text("MIDI → OSC mapping is currently turned off globally, so OSC won't be sent until it's enabled.")
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    private func qwertyStepsEditor(for item: ControlItem) -> some View {
+        Group {
+            ForEach(Array(item.qwertySteps.enumerated()), id: \.element.id) { stepIndex, _ in
+                HStack(spacing: 8) {
+                    TextField("Key", text: qwertyStepBinding(stepIndex, \.key), prompt: Text("space"))
+                        .frame(width: 80)
+                    Toggle("⌘", isOn: qwertyStepBinding(stepIndex, \.cmd)).toggleStyle(.button)
+                    Toggle("⇧", isOn: qwertyStepBinding(stepIndex, \.shift)).toggleStyle(.button)
+                    Toggle("⌥", isOn: qwertyStepBinding(stepIndex, \.alt)).toggleStyle(.button)
+                    Toggle("⌃", isOn: qwertyStepBinding(stepIndex, \.ctrl)).toggleStyle(.button)
+                    TextField("Delay", value: qwertyStepBinding(stepIndex, \.delayMs), format: .number)
+                        .frame(width: 50)
+                    Text("ms").foregroundColor(.secondary)
+                    Spacer()
+                    Button(role: .destructive) {
+                        engine.recordUndoSnapshot(actionName: "Remove QWERTY Step")
+                        engine.controls[index].qwertySteps.remove(at: stepIndex)
+                        engine.saveCurrentSlot()
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            Button {
+                engine.recordUndoSnapshot(actionName: "Add QWERTY Step")
+                engine.controls[index].qwertySteps.append(QwertyStep(key: ""))
+                engine.saveCurrentSlot()
+            } label: {
+                Label("Add Keystroke", systemImage: "plus.circle")
+            }
+            .buttonStyle(.borderless)
+            if !engine.qwertyKeybindsEnabled {
+                Text("QWERTY keybinds are currently turned off globally.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    private func velocityRow(_ title: String, value: Binding<UInt8>) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            RoundedRectangle(cornerRadius: 3)
+                .fill(BitchBoyHardwareColor.color(for: value.wrappedValue))
+                .frame(width: 18, height: 18)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.3), lineWidth: 1))
+            Stepper(value: value, in: 0...127) {
+                Text("\(value.wrappedValue)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(width: 30, alignment: .trailing)
+            }
+        }
+    }
+
+    // MARK: - Bindings
+
+    /// Binds a control field to the engine, recording a debounced undo step and saving the slot on change.
+    private func field<Value>(_ keyPath: WritableKeyPath<ControlItem, Value>, _ undoName: String) -> Binding<Value> {
+        Binding(
+            get: { engine.controls[index][keyPath: keyPath] },
+            set: { newValue in
+                engine.recordUndoSnapshot(actionName: undoName, debounceSeconds: 1.0)
+                engine.controls[index][keyPath: keyPath] = newValue
+                engine.saveCurrentSlot()
+            }
+        )
+    }
+
+    /// The idle color is what the LED shows at rest, so push it to the hardware immediately.
+    private var idleVelocityBinding: Binding<UInt8> {
+        Binding(
+            get: { engine.controls[index].idleVelocity },
+            set: { newValue in
+                engine.recordUndoSnapshot(actionName: "Change Idle Color", debounceSeconds: 1.0)
+                engine.controls[index].idleVelocity = newValue
+                if !engine.controls[index].isPressed && !engine.controls[index].toggleLatched {
+                    engine.controls[index].currentLED = newValue
+                    engine.sendNoteOn(note: engine.controls[index].number, velocity: newValue)
+                }
+                engine.saveCurrentSlot()
+            }
+        )
+    }
+
+    private var mscCommandBinding: Binding<MSCCommand> {
+        Binding(
+            get: { engine.controls[index].typedMSCCommand },
+            set: { newValue in
+                engine.recordUndoSnapshot(actionName: "Change MSC Command")
+                engine.controls[index].typedMSCCommand = newValue
+                engine.saveCurrentSlot()
+            }
+        )
+    }
+
+    private var oscArgTypeBinding: Binding<OSCArgumentType> {
+        Binding(
+            get: { engine.controls[index].typedOSCArgType },
+            set: { newValue in
+                engine.recordUndoSnapshot(actionName: "Change OSC Argument")
+                engine.controls[index].typedOSCArgType = newValue
+                engine.saveCurrentSlot()
+            }
+        )
+    }
+
+    private func qwertyStepBinding<Value>(_ stepIndex: Int, _ keyPath: WritableKeyPath<QwertyStep, Value>) -> Binding<Value> {
+        Binding(
+            // Fall back to a blank step if this row was just removed but SwiftUI reads it once more.
+            get: {
+                let steps = engine.controls[index].qwertySteps
+                return (steps.indices.contains(stepIndex) ? steps[stepIndex] : QwertyStep(key: ""))[keyPath: keyPath]
+            },
+            set: { newValue in
+                guard stepIndex < engine.controls[index].qwertySteps.count else { return }
+                engine.recordUndoSnapshot(actionName: "Edit QWERTY Step", debounceSeconds: 1.0)
+                engine.controls[index].qwertySteps[stepIndex][keyPath: keyPath] = newValue
+                engine.saveCurrentSlot()
+            }
+        )
+    }
+
+    // MARK: - Display Names
+
+    private func kindTitle(_ kind: ControlKind) -> String {
+        switch kind {
+        case .key: return "Key"
+        case .vfader: return "Vertical Fader"
+        case .hfader: return "Horizontal Fader"
+        case .knob: return "Rotary Knob"
+        }
+    }
+
+    private func numberTitle(for item: ControlItem) -> String {
+        item.kind == .key ? "Note \(item.number)" : "CC \(item.number)"
+    }
+
+    private func actionTitle(_ type: ActionType) -> String {
+        switch type {
+        case .passthrough: return "MIDI Passthrough"
+        case .qwerty: return "QWERTY Macro"
+        case .osc: return "OSC (UDP)"
+        case .applescript: return "AppleScript"
+        case .msc: return "MIDI Show Control"
+        case .artnet: return "Art-Net DMX"
+        case .sacn: return "sACN (E1.31)"
+        }
+    }
+}
+
+// ============================================================================
+// CREATOR CARD (OPENED FROM THE "TAYLOR FOSSEN" BADGE)
+// ============================================================================
+
+struct CreatorCardView: View {
+    var accentColor: Color = .cyan
+    @Environment(\.dismiss) private var dismiss
+
+    private let coffeeURL = URL(string: "https://buymeacoffee.com/fossen")
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Square asset with the artwork centered, so a circular crop keeps the squirrel in the middle.
+            Image("SquirrelLogo")
+                .resizable()
+                .scaledToFill()
+                .frame(width: 220, height: 220)
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .stroke(accentColor.opacity(0.85), lineWidth: 2)
+                )
+                .shadow(color: accentColor.opacity(0.35), radius: 10)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Taylor Fossen squirrel logo")
+
+            HStack(spacing: 6) {
+                Text("Made with")
+                Image(systemName: "heart.fill")
+                    .foregroundColor(.pink)
+                    .accessibilityLabel("love")
+                Text("by Taylor Fossen")
+            }
+            .font(.system(size: 16, weight: .heavy, design: .monospaced))
+
+            if let coffeeURL {
+                Link(destination: coffeeURL) {
+                    Label("Buy Me a Coffee", systemImage: "cup.and.saucer.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(accentColor.opacity(0.22)))
+                        .overlay(Capsule().stroke(accentColor, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("buymeacoffee.com/fossen")
+
+                Text("buymeacoffee.com/fossen")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Button("Close") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(24)
+        .frame(width: 408)
+    }
+}
+
 struct ContentView: View {
-    @ObservedObject var engine: BitchBoyEngine
+    @Bindable var engine: BitchBoyEngine
     var standaloneModule: StudioModuleID? = nil
 
     @State private var isHoveringLoveBadge: Bool = false
     @State private var isHoveringTitleLogo: Bool = false
     @State private var activeMemoryBank: Int = 0 // 0 = BANK 1 (A-D), 1 = BANK 2 (E-H)
     @State private var showSlotCustomizer: Bool = false
+    @State private var mappingEditorTarget: ControlMappingTarget? = nil
+    @State private var showCreatorCard: Bool = false
     @State private var inspectorTab: Int = 0 // 0 = LEDs, 1 = QWERTY
     @State private var isEditingNameBox: Bool = false
     @FocusState private var isNameFieldFocused: Bool
+    @State private var isEditingSlotName: Bool = false
+    @State private var isEditingShowName: Bool = false
+    @State private var isEditingSynthName: Bool = false
     @State private var resizingModule: StudioModuleID? = nil
     @State private var dragInitialHeight: CGFloat = 0
     @State private var terminalQuickCommand: String = ""
@@ -7438,11 +9588,21 @@ struct ContentView: View {
     }
 
     var body: some View {
-        if let detachedMod = standaloneModule {
-            standaloneModuleWindowBody(for: detachedMod)
+        Group {
+            if let detachedMod = standaloneModule {
+                standaloneModuleWindowBody(for: detachedMod)
+                    .preferredColorScheme(.dark)
+            } else {
+                mainConsoleWindowBody
+                    .preferredColorScheme(.dark)
+            }
+        }
+        .sheet(item: $mappingEditorTarget) { target in
+            ControlMappingEditorView(engine: engine, index: target.id)
                 .preferredColorScheme(.dark)
-        } else {
-            mainConsoleWindowBody
+        }
+        .sheet(isPresented: $showCreatorCard) {
+            CreatorCardView(accentColor: engine.currentTheme.accentPrimary)
                 .preferredColorScheme(.dark)
         }
     }
@@ -7525,16 +9685,53 @@ struct ContentView: View {
 
     private var mainConsoleWindowBody: some View {
         GeometryReader { windowGeo in
-            let baseWidth: CGFloat = engine.effectiveConsoleWidth
+            let baseChassisBaseW: CGFloat = (engine.hasLeftWing ? engine.leftWingWidth + 24 : 0)
+                + engine.centerConsoleWidth
+                + (engine.hasRightWing ? engine.rightWingWidth + 24 : 0)
+                + 44
+            let baseWidth: CGFloat = baseChassisBaseW + 32
             let baseHeight: CGFloat = engine.effectiveConsoleHeight
-            // ALWAYS fit inside windowGeo.size so the window NEVER clips any controls at any size!
-            let fitW = max(0.15, windowGeo.size.width / baseWidth)
-            let fitH = max(0.15, windowGeo.size.height / baseHeight)
-            let fitScale = min(2.4, min(fitW, fitH))
+
+            // Fit scale ensures all vertical content fits nicely inside the window:
+            let fitH = max(0.15, min(2.5, windowGeo.size.height / baseHeight))
+            let fitW = max(0.15, min(2.5, windowGeo.size.width / baseWidth))
+
+            // When window is wider than base aspect ratio, fitScale is determined by height (fitH),
+            // and we stretch the UI horizontally across the entire width of the window!
+            let fitScale = min(fitW, fitH)
+
+            // Available unscaled width inside the window bounds at this fitScale:
+            let availableUnscaledWidth = max(baseChassisBaseW, (windowGeo.size.width / fitScale) - 32)
+            let extraWidth = max(0, availableUnscaledWidth - baseChassisBaseW)
+
+            // Compute dynamic wing widths that stretch out to the sides:
+            let effLeftW: CGFloat = {
+                guard engine.hasLeftWing else { return 0 }
+                if engine.hasRightWing {
+                    return engine.leftWingWidth + (extraWidth / 2)
+                } else {
+                    return engine.leftWingWidth + extraWidth
+                }
+            }()
+
+            let effRightW: CGFloat = {
+                guard engine.hasRightWing else { return 0 }
+                if engine.hasLeftWing {
+                    return engine.rightWingWidth + (extraWidth / 2)
+                } else {
+                    return engine.rightWingWidth + extraWidth
+                }
+            }()
+
+            let totalLeftW: CGFloat = engine.hasLeftWing ? (effLeftW + 24) : 0
+            let totalRightW: CGFloat = engine.hasRightWing ? (effRightW + 24) : 0
+            let currentChassisWidth = totalLeftW + engine.centerConsoleWidth + totalRightW + 44
+            let currentContainerWidth = currentChassisWidth + 32
+
             let isOverlayActive = (engine.spotlightModule != nil || engine.showCustomSoundStudio || engine.showCustomThemeStudio || engine.showUpdateModal)
 
             ZStack {
-                // Lock NSWindow aspect ratio & minimum size (15% of controller) so dragging the window scales the whole controller proportionally with zero clipping
+                // Lock NSWindow minimum size so dragging the window scales the whole controller proportionally with zero clipping
                 WindowLevelAndSizeAccessor(
                     isAlwaysOnTop: engine.isWindowAlwaysOnTop,
                     baseSize: NSSize(width: baseWidth, height: baseHeight),
@@ -7550,11 +9747,31 @@ struct ContentView: View {
                     // Main Console Layer (Blurs smoothly when a module is Spotlit in the center or Custom Sound Studio is open!)
                     ZStack(alignment: .top) {
                         VStack(spacing: 12) {
-                            topNavigationBar
-                            mainHardwareFaceplate
+                            topNavigationBar(width: currentChassisWidth)
+                            mainHardwareFaceplate(effLeftW: effLeftW, effRightW: effRightW, chassisWidth: currentChassisWidth)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
+
+                        if let toast = engine.toastNotification {
+                            HStack(spacing: 8) {
+                                Image(systemName: toast.icon)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(engine.currentTheme.accentPrimary)
+                                Text(toast.message)
+                                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.black.opacity(0.92))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(engine.currentTheme.accentPrimary.opacity(0.8), lineWidth: 1.2))
+                            .shadow(color: engine.currentTheme.accentPrimary.opacity(0.5), radius: 8)
+                            .transition(.scale(scale: 0.85).combined(with: .opacity))
+                            .padding(.top, 48)
+                            .zIndex(999)
+                        }
 
                         if engine.showConnectionBanner {
                             HStack(spacing: 12) {
@@ -7582,6 +9799,7 @@ struct ContentView: View {
                                         .foregroundColor(Color.white.opacity(0.75))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Dismiss connection banner")
                             }
                             .padding(.horizontal, 18)
                             .padding(.vertical, 10)
@@ -7612,6 +9830,7 @@ struct ContentView: View {
                                         .foregroundColor(Color.white.opacity(0.75))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Dismiss update notice")
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
@@ -7633,7 +9852,7 @@ struct ContentView: View {
                     .scaleEffect(isOverlayActive ? 0.97 : 1.0)
                     .animation(.spring(response: 0.34, dampingFraction: 0.8), value: isOverlayActive)
                 }
-                .frame(width: baseWidth, height: baseHeight, alignment: .top)
+                .frame(width: currentContainerWidth, height: baseHeight, alignment: .top)
                 .scaleEffect(fitScale, anchor: .center)
                 .frame(width: windowGeo.size.width, height: windowGeo.size.height, alignment: .center)
 
@@ -7646,13 +9865,13 @@ struct ContentView: View {
                                     .font(.system(size: 11, weight: .bold))
                                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
                                 Text("REARRANGE & RESIZE MODE ACTIVE")
-                                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 11, weight: .bold, design: .default))
                                     .foregroundColor(.white)
                             }
 
                             Text("• Drag cards or use [⇦ LW] [⇨ RW] [⇩ RACK] pills")
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(white: 0.78))
+                                .font(.system(size: 9.5, weight: .medium, design: .default))
+                                .foregroundColor(Color(white: 0.85))
 
                             Button(action: {
                                 engine.toggleRearrangeModulesMode()
@@ -7661,7 +9880,7 @@ struct ContentView: View {
                                     Image(systemName: "checkmark.circle.fill")
                                     Text("LOCK LAYOUT")
                                 }
-                                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 10, weight: .bold, design: .default))
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 5)
                                 .background(Color(red: 0.96, green: 0.76, blue: 0.18))
@@ -7861,7 +10080,7 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     // TOP NAVIGATION & SYSTEM BAR (CLEAN 3-ZONE CYBER COMMAND CONSOLE)
     // ------------------------------------------------------------------------
-    private var topNavigationBar: some View {
+    private func topNavigationBar(width: CGFloat) -> some View {
         HStack(spacing: 8) {
             // ZONE 1: BRAND IDENTITY & HARDWARE STATUS
             HStack(spacing: 8) {
@@ -7877,7 +10096,7 @@ struct ContentView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text("BITCHMANAGER")
-                            .font(.system(size: 16.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 19, weight: .heavy, design: .default))
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [
@@ -7888,13 +10107,13 @@ struct ContentView: View {
                                     endPoint: .bottom
                                 )
                             )
-                            .tracking(1.0)
+                            .tracking(1.2)
                             .shadow(color: engine.currentTheme.accentPrimary.opacity(0.85), radius: isHoveringTitleLogo ? 6 : 3)
 
                         Text("BLOCK HARDWARE // PROTOCOL ENGINE")
-                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11, weight: .bold, design: .default))
                             .foregroundColor(engine.currentTheme.headerText.opacity(0.85))
-                            .tracking(0.5)
+                            .tracking(0.8)
                     }
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -7945,14 +10164,14 @@ struct ContentView: View {
                             .shadow(color: engine.isConnected ? Color.green : Color.red, radius: 4)
 
                         Text(engine.isConnected ? "ONLINE" : "OFFLINE")
-                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.isConnected ? Color(red: 0.2, green: 0.95, blue: 0.45) : Color(red: 0.98, green: 0.35, blue: 0.35))
 
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundColor(Color(white: 0.7))
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 12)
                     .background(Color.black.opacity(0.55))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -7975,9 +10194,9 @@ struct ContentView: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 11, weight: .bold))
                             Text("UPDATE \(rel.tagName)")
-                                .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11, weight: .bold, design: .default))
                         }
-                        .frame(height: 35)
+                        .frame(height: 37)
                         .padding(.horizontal, 11)
                         .background(
                             LinearGradient(
@@ -7993,12 +10212,171 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                     .hoverGrow(1.05)
                 }
+
+                // Quick Hardware MIDI Send Toggle (Prevents keybind conflicts!)
+                Button(action: {
+                    engine.toggleMasterHardwareMIDISend()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: engine.hardwareMIDISendEnabled ? "cable.connector" : "cable.connector.slash")
+                            .font(.system(size: 11.5, weight: .bold))
+                        Text(engine.hardwareMIDISendEnabled ? "HW MIDI: ON" : "HW MIDI: MUTED")
+                            .font(.system(size: 11.5, weight: .bold, design: .default))
+                    }
+                    .frame(height: 37)
+                    .padding(.horizontal, 10)
+                    .background(engine.hardwareMIDISendEnabled ? Color(red: 0.12, green: 0.32, blue: 0.22) : Color(red: 0.38, green: 0.12, blue: 0.14))
+                    .foregroundColor(engine.hardwareMIDISendEnabled ? Color(red: 0.32, green: 0.98, blue: 0.62) : Color(red: 0.98, green: 0.42, blue: 0.42))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(engine.hardwareMIDISendEnabled ? Color(red: 0.32, green: 0.98, blue: 0.62).opacity(0.4) : Color(red: 0.98, green: 0.42, blue: 0.42).opacity(0.4), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .hoverGrow(1.05)
+                .help("Toggle Master Hardware MIDI Output — Mute to prevent keybind confusion")
             }
 
             Spacer(minLength: 4)
 
             // ZONE 2: STUDIO WORKSPACE, TERMINAL, PRESETS & FX
             HStack(spacing: 6) {
+                // Undo & Redo History Controls
+                HStack(spacing: 2) {
+                    Button(action: { engine.undo() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 11.5, weight: .bold))
+                            if engine.undoStepsCount > 0 {
+                                Text("\(engine.undoStepsCount)")
+                                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                            }
+                        }
+                        .frame(height: 37)
+                        .padding(.horizontal, 9)
+                        .background(Color.white.opacity(engine.canUndo ? 0.08 : 0.03))
+                        .foregroundColor(engine.canUndo ? engine.currentTheme.accentPrimary : Color.white.opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.canUndo ? engine.currentTheme.accentPrimary.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.canUndo)
+                    .hoverGrow(1.05)
+                    .help("Undo last change (⌘Z)\(engine.lastUndoActionName.isEmpty ? "" : " — " + engine.lastUndoActionName)")
+
+                    Button(action: { engine.redo() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.uturn.forward")
+                                .font(.system(size: 11.5, weight: .bold))
+                            if engine.redoStepsCount > 0 {
+                                Text("\(engine.redoStepsCount)")
+                                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                            }
+                        }
+                        .frame(height: 37)
+                        .padding(.horizontal, 9)
+                        .background(Color.white.opacity(engine.canRedo ? 0.08 : 0.03))
+                        .foregroundColor(engine.canRedo ? engine.currentTheme.accentPrimary : Color.white.opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.canRedo ? engine.currentTheme.accentPrimary.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.canRedo)
+                    .hoverGrow(1.05)
+                    .help("Redo last change (⇧⌘Z)\(engine.lastRedoActionName.isEmpty ? "" : " — " + engine.lastRedoActionName)")
+                }
+
+                // Copy & Paste Quick Action Pill
+                HStack(spacing: 2) {
+                    Button(action: { engine.copyControl(index: engine.selectedIndex) }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("COPY")
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                        }
+                        .frame(height: 37)
+                        .padding(.horizontal, 8)
+                        .background(Color.white.opacity(0.08))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .hoverGrow(1.05)
+                    .help("Copy selected control configuration (⌘C)")
+
+                    Button(action: { engine.pasteControlToSelected() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "doc.badge.arrow.up")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(engine.selectedIndices.count > 1 ? "PASTE (\(engine.selectedIndices.count))" : "PASTE")
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                        }
+                        .frame(height: 37)
+                        .padding(.horizontal, 8)
+                        .background(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary.opacity(0.25) : Color.white.opacity(0.04))
+                        .foregroundColor(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary : Color.white.opacity(0.3))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary.opacity(0.4) : Color.white.opacity(0.08), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.hasCopiedConfig)
+                    .hoverGrow(1.05)
+                    .help("Paste configuration to selected control(s) (⌘V)")
+                }
+
+                // 120 FPS ProMotion Quality Switcher
+                Menu {
+                    Section("Display Engine Frame Rate") {
+                        Button(action: { engine.setTargetFPS(120) }) {
+                            HStack {
+                                Text("120 FPS // ProMotion Ultra")
+                                if engine.targetFPS == 120 {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button(action: { engine.setTargetFPS(60) }) {
+                            HStack {
+                                Text("60 FPS // Standard (Power Saver)")
+                                if engine.targetFPS == 60 {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                    Section("Engine Telemetry") {
+                        Text("Active Engine Rate: \(String(format: "%.1f", engine.measuredFPS)) FPS")
+                        Text("Frame Interval: \(String(format: "%.2f", engine.frameLatencyMs)) ms")
+                        Text("Hardware MIDI Bus: 60Hz Throttled & Protected")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(engine.targetFPS == 120 ? Color(red: 0.2, green: 0.95, blue: 0.5) : Color.cyan)
+                            .frame(width: 7, height: 7)
+                            .shadow(color: engine.targetFPS == 120 ? Color.green : Color.cyan, radius: 3)
+                        Text("\(engine.targetFPS) FPS")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.targetFPS == 120 ? Color(red: 0.2, green: 0.95, blue: 0.5) : Color.cyan)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(Color(white: 0.6))
+                    }
+                    .frame(height: 37)
+                    .padding(.horizontal, 9)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(engine.targetFPS == 120 ? Color.green.opacity(0.35) : Color.cyan.opacity(0.35), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .hoverGrow(1.05)
+                .help("Display Engine Quality: 120 FPS ProMotion / 60 FPS")
+
                 // Preset Slot Quick Switcher
                 Menu {
                     ForEach(0..<engine.slots.count, id: \.self) { idx in
@@ -8016,34 +10394,44 @@ struct ContentView: View {
                         }
                     }
                     Divider()
-                    Button("💾 Save Slot to Memory") {
+                    Button(action: {
                         engine.saveCurrentSlot()
                         engine.log("💾 Presets saved to internal memory.")
+                    }) {
+                        Label("Save Slot to Memory", systemImage: "square.and.arrow.down")
                     }
-                    Button("📋 Clone to Next Slot") {
+                    Button(action: {
                         engine.cloneCurrentSlot()
+                    }) {
+                        Label("Clone to Next Slot", systemImage: "doc.on.doc")
                     }
-                    Button("⤓ Export Slot JSON") {
+                    Button(action: {
                         _ = engine.exportPresetToJSON()
+                    }) {
+                        Label("Export Slot JSON...", systemImage: "square.and.arrow.up")
                     }
-                    Button("⤒ Import Slot JSON") {
+                    Button(action: {
                         engine.importPresetFromClipboard()
+                    }) {
+                        Label("Import Slot JSON...", systemImage: "square.and.arrow.down.on.square")
                     }
                     Divider()
-                    Button("🚨 Panic Blackout") {
+                    Button(action: {
                         engine.blackoutPanic()
+                    }) {
+                        Label("Emergency Blackout (All Off)", systemImage: "bolt.slash.fill")
                     }
                 } label: {
                     let slotLetters = ["SLOT A", "SLOT B", "SLOT C", "SLOT D", "SLOT E", "SLOT F", "SLOT G", "SLOT H"]
                     HStack(spacing: 4) {
                         Image(systemName: engine.slots.indices.contains(engine.activeSlot) ? engine.slots[engine.activeSlot].iconName : "folder.fill")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 13.5, weight: .bold))
                         Text(slotLetters[engine.activeSlot % slotLetters.count])
-                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9.5, weight: .bold))
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 11)
                     .background(Color.white.opacity(0.08))
                     .foregroundColor(engine.currentTheme.accentPrimary)
@@ -8060,9 +10448,9 @@ struct ContentView: View {
                             Image(systemName: engine.isRearrangingModules ? "checkmark.circle.fill" : "square.grid.2x2.fill")
                                 .font(.system(size: 12.5, weight: .bold))
                             Text(engine.isRearrangingModules ? "DONE (LOCK)" : "MODULES")
-                                .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 13, weight: .heavy, design: .monospaced))
                         }
-                        .frame(height: 35)
+                        .frame(height: 37)
                         .padding(.horizontal, 12)
                         .background(engine.isRearrangingModules ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.08))
                         .foregroundColor(engine.isRearrangingModules ? .black : engine.currentTheme.accentPrimary)
@@ -8114,7 +10502,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9.5, weight: .bold))
-                            .frame(width: 18, height: 35)
+                            .frame(width: 20, height: 37)
                             .background(Color.white.opacity(0.08))
                             .foregroundColor(engine.currentTheme.accentPrimary)
                             .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -8140,12 +10528,12 @@ struct ContentView: View {
                         Image(systemName: "apple.terminal.fill")
                             .font(.system(size: 12, weight: .bold))
                         Text("TERMINAL")
-                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
                         Circle()
                             .fill(engine.protocolEvents.isEmpty ? Color.gray : Color.green)
                             .frame(width: 6.5, height: 6.5)
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 11)
                     .background(engine.spotlightModule == .terminal ? Color.cyan.opacity(0.25) : Color.white.opacity(0.08))
                     .foregroundColor(engine.spotlightModule == .terminal ? Color.cyan : Color(white: 0.88))
@@ -8156,28 +10544,32 @@ struct ContentView: View {
                 .hoverGrow(1.05)
                 .help("Toggle Protocol Terminal & Packet Monitor")
 
-                // Rainbow Refresh
+                // LED Cycle / Wave Refresh
                 Button(action: {
                     engine.runRainbowWaveRefresh()
                 }) {
-                    HStack(spacing: 3) {
-                        Text("✨🌈")
-                        Text("RAINBOW")
-                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                    HStack(spacing: 5) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11.5, weight: .bold))
+                        Text("LED CYCLE")
+                            .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 12)
                     .background(
                         LinearGradient(
-                            colors: [Color(red: 0.45, green: 0.25, blue: 0.75), Color(red: 0.25, green: 0.65, blue: 0.75)],
+                            colors: [Color(red: 0.40, green: 0.22, blue: 0.70), Color(red: 0.18, green: 0.58, blue: 0.72)],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
                     .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.05)
+                .help("Trigger Full Hardware LED Calibration Cycle")
                 .hoverGrow(1.05)
                 .disabled(engine.isRainbowRunning)
 
@@ -8224,12 +10616,12 @@ struct ContentView: View {
                             Image(systemName: engine.isPlayingCustomFX ? "wand.and.stars" : (engine.currentFXMode == .staticFX ? "sparkles" : engine.currentFXMode.icon))
                                 .font(.system(size: 12, weight: .bold))
                             Text(engine.isPlayingCustomFX ? "FX: \(engine.activeCustomFXName)" : "FX: \(engine.currentFXMode.rawValue)")
-                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                .font(.system(size: 13, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 9.5, weight: .bold))
                         }
-                        .frame(height: 35)
+                        .frame(height: 37)
                         .padding(.horizontal, 11)
                         .background((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.08, green: 0.25, blue: 0.24) : Color(red: 0.92, green: 0.45, blue: 0.15).opacity(0.88))
                         .foregroundColor((engine.currentFXMode == .staticFX && !engine.isPlayingCustomFX) ? Color(red: 0.22, green: 0.96, blue: 0.76) : .white)
@@ -8246,7 +10638,7 @@ struct ContentView: View {
                         }) {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 7.5, weight: .heavy))
-                                .frame(width: 28, height: 35)
+                                .frame(width: 30, height: 37)
                                 .background(Color.red.opacity(0.85))
                                 .foregroundColor(.white)
                                 .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -8267,11 +10659,12 @@ struct ContentView: View {
                     Button(action: { engine.zoomOutUI() }) {
                         Image(systemName: "minus.magnifyingglass")
                             .font(.system(size: 12, weight: .bold))
-                            .frame(width: 32, height: 35)
+                            .frame(width: 34, height: 37)
                             .background(Color.white.opacity(0.08))
                             .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Zoom Out Console")
 
                     Menu {
                         Button(action: { engine.enableAutoFitWindow() }) {
@@ -8299,8 +10692,8 @@ struct ContentView: View {
                     } label: {
                         let displayPct = Int(round(engine.lastComputedFitScale * 100))
                         Text("\(displayPct)%")
-                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
-                            .frame(height: 35)
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .frame(height: 37)
                             .padding(.horizontal, 12)
                             .background(engine.autoFitWindow ? engine.currentTheme.accentPrimary.opacity(0.22) : Color.white.opacity(0.08))
                             .foregroundColor(engine.currentTheme.accentPrimary)
@@ -8310,11 +10703,12 @@ struct ContentView: View {
                     Button(action: { engine.zoomInUI() }) {
                         Image(systemName: "plus.magnifyingglass")
                             .font(.system(size: 12, weight: .bold))
-                            .frame(width: 32, height: 35)
+                            .frame(width: 34, height: 37)
                             .background(Color.white.opacity(0.08))
                             .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Zoom In Console")
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.18), lineWidth: 1))
@@ -8387,12 +10781,12 @@ struct ContentView: View {
                     HStack(spacing: 3) {
                         Text("🎨")
                         Text(engine.currentTheme == .customUser ? engine.activeCustomTheme.name : engine.currentTheme.rawValue)
-                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9.5, weight: .bold))
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 11)
                     .background(Color.white.opacity(0.08))
                     .foregroundColor(engine.currentTheme.accentPrimary)
@@ -8525,6 +10919,15 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        Button(action: { engine.popOutModuleToWindow(.hardwareMIDIFilter) }) {
+                            HStack {
+                                Label("Hardware MIDI & Mute", systemImage: "switch.2")
+                                if engine.detachedModules.contains(.hardwareMIDIFilter) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
                     }
 
                     Divider()
@@ -8553,7 +10956,7 @@ struct ContentView: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8.5, weight: .bold))
                     }
-                    .frame(height: 35)
+                    .frame(height: 37)
                     .padding(.horizontal, 10)
                     .background(Color.white.opacity(0.08))
                     .foregroundColor(engine.currentTheme.accentPrimary)
@@ -8569,7 +10972,7 @@ struct ContentView: View {
                     Image(systemName: engine.isWindowAlwaysOnTop ? "pin.fill" : "pin")
                         .font(.system(size: 13, weight: .bold))
                         .rotationEffect(.degrees(engine.isWindowAlwaysOnTop ? 0 : 45))
-                        .frame(width: 35, height: 35)
+                        .frame(width: 37, height: 37)
                         .background(engine.isWindowAlwaysOnTop ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
                         .foregroundColor(engine.isWindowAlwaysOnTop ? .black : engine.currentTheme.accentPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -8582,37 +10985,50 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .hoverGrow(1.05)
                 .help("Toggle Window Always On Top")
+                .accessibilityLabel(engine.isWindowAlwaysOnTop ? "Unpin window from floating on top" : "Keep window always on top")
 
-                // Made with Love Badge
-                HStack(spacing: 3) {
-                    Text("❤️ Taylor Fossen")
-                        .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
-                        .foregroundColor(isHoveringLoveBadge ? Color.white : Color.pink.opacity(0.92))
+                // Hardware Designer & Studio Signature Badge (opens the creator card)
+                Button(action: {
+                    showCreatorCard = true
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "cpu")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("TAYLOR FOSSEN")
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
+                            .foregroundColor(isHoveringLoveBadge ? .white : Color(white: 0.85))
+                    }
+                    .frame(height: 37)
+                    .padding(.horizontal, 12)
+                    .background(
+                        Capsule()
+                            .fill(isHoveringLoveBadge ? engine.currentTheme.accentPrimary.opacity(0.25) : Color.black.opacity(0.48))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(isHoveringLoveBadge ? engine.currentTheme.accentPrimary : Color.white.opacity(0.18), lineWidth: 1.0)
+                    )
+                    .contentShape(Capsule())
                 }
-                .frame(height: 35)
-                .padding(.horizontal, 12)
-                .background(
-                    Capsule()
-                        .fill(isHoveringLoveBadge ? Color.pink.opacity(0.42) : Color.black.opacity(0.48))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(isHoveringLoveBadge ? Color.pink : Color.pink.opacity(0.45), lineWidth: isHoveringLoveBadge ? 1.5 : 1.0)
-                )
-                .shadow(color: isHoveringLoveBadge ? Color.pink.opacity(0.95) : Color.clear, radius: isHoveringLoveBadge ? 10 : 0)
-                .scaleEffect(isHoveringLoveBadge ? 1.04 : 1.0)
+                .buttonStyle(.plain)
+                .shadow(color: isHoveringLoveBadge ? engine.currentTheme.accentPrimary.opacity(0.5) : Color.clear, radius: 8)
+                .scaleEffect(isHoveringLoveBadge ? 1.03 : 1.0)
                 .animation(.easeInOut(duration: 0.18), value: isHoveringLoveBadge)
                 .onHover { isHoveringLoveBadge = $0 }
+                .help("BitchBoy Hardware & DSP Architecture Designed by Taylor Fossen")
+                .accessibilityLabel("Made by Taylor Fossen")
+                .accessibilityHint("Opens the creator card")
             }
 
         }
-        .frame(width: engine.chassisTotalWidth)
+        .frame(width: width)
     }
 
     // ------------------------------------------------------------------------
     // MAIN HARDWARE FACEPLATE (THE AUTHENTIC CONSOLE LAYOUT)
     // ------------------------------------------------------------------------
-    private var mainHardwareFaceplate: some View {
+    private func mainHardwareFaceplate(effLeftW: CGFloat, effRightW: CGFloat, chassisWidth: CGFloat) -> some View {
         ZStack(alignment: .top) {
             // Chassis Surface
             RoundedRectangle(cornerRadius: 20)
@@ -8631,94 +11047,107 @@ struct ContentView: View {
                     lineWidth: 5.5
                 )
 
-            // Metallic Screws in Bezel Corners & Centers
+            // Metallic Screws in Bezel Corners
             VStack {
                 HStack {
-                    ScrewRivetView(size: 13)
+                    ScrewRivetView(size: 12)
                     Spacer()
-                    ScrewRivetView(size: 13)
-                    Spacer()
-                    ScrewRivetView(size: 13)
+                    ScrewRivetView(size: 12)
                 }
                 Spacer()
                 HStack {
-                    ScrewRivetView(size: 13)
+                    ScrewRivetView(size: 12)
                     Spacer()
-                    ScrewRivetView(size: 13)
-                    Spacer()
-                    ScrewRivetView(size: 13)
+                    ScrewRivetView(size: 12)
                 }
             }
-            .padding(7)
+            .padding(8)
 
             // FULL-CHASSIS HARDWARE CONSOLE: LEFT WING + CENTER BITCHBOY MATRIX + RIGHT WING
             HStack(alignment: .top, spacing: 0) {
                 // LEFT WING (Modules placed in Left Wing)
-                if !engine.leftWingModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
+                if engine.hasLeftWing {
                     HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(engine.leftWingModules.filter { !$0.isHardwareModule }) { mod in
-                                dynamicModuleContainer(for: mod, in: .leftWing)
+                        ScrollView([.vertical], showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(engine.leftWingModules.filter { !$0.isHardwareModule }) { mod in
+                                    dynamicModuleContainer(for: mod, in: .leftWing, customWidth: effLeftW)
+                                }
+                                if engine.isRearrangingModules {
+                                    dropTargetCard(forZone: .leftWing)
+                                }
                             }
-                            if engine.isRearrangingModules {
-                                dropTargetCard(forZone: .leftWing)
-                            }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
-                        .frame(width: engine.leftWingWidth)
+                        .frame(width: effLeftW)
                         .frame(height: engine.chassisContentHeight, alignment: .top)
 
                         WingHorizontalResizeDivider(width: $engine.leftWingWidth, isLeft: true)
                     }
-                    .frame(width: engine.totalLeftWingWidth, alignment: .leading)
+                    .frame(width: effLeftW + 24, alignment: .leading)
                 }
 
                 // CENTER HARDWARE CONSOLE: 8x4 Grid + 1x8 Strip + 8 VFaders + 4 HFaders + Logo + HUD + Knobs + 3x3 Keypad + OPTIONAL BOTTOM RACK
                 VStack(spacing: 12) {
-                    HStack(alignment: .top, spacing: 18) {
-                        // LEFT COLUMN: 8x4 Grid + 1x8 Strip + 8 Vertical Faders (Width: 414)
-                        VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 0) {
+                        // LEFT COLUMN: 8x4 Grid + 1x8 Strip + Spaced Down 8 Vertical Faders (Width: 486)
+                        VStack(alignment: .leading, spacing: 0) {
                             section1KeyGrid8x4
+                                .padding(.bottom, 8)
                             section2KeyStrip1x8
+                                .padding(.bottom, 16)
+
+                            // Console Demarcation Gutter (spaces the faders down!)
+                            HStack(spacing: 6) {
+                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
+                                Text("MASTER MIXING TIER // 8 DUAL-RAIL FADERS")
+                                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
+                            }
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 10)
+
                             section4VerticalFaders
                         }
-                        .frame(width: 414)
+                        .frame(width: 486)
 
-                        // RIGHT SECTION: Middle Column (Faders + Glowing Logo + HUD) & Far-Right Column (Knobs + Mascot + Keypad)
-                        HStack(alignment: .top, spacing: 14) {
-                            // Middle Column: 4 Horizontal Faders + Glowing BitchBoy Logo + Center Inspector HUD (Width: 254)
-                            VStack(alignment: .leading, spacing: 10) {
-                                section5HorizontalFaders
-                                    .frame(width: 254)
+                        Spacer().frame(width: 16)
 
-                                // Glowing BitchBoy Mascot Logo (Style and glow of BitchBoy Mascot)
-                                BitchBoyGlowingLogoView(auraColor: engine.currentTheme.accentPrimary) {
-                                    SoundEffect.mascotSqueak.play(with: engine.soundPack)
-                                    engine.log("✨ BITCHBOY LOGO ACTIVATED")
-                                }
-                                .frame(width: 254, height: 68)
+                        // Middle Column: 4 Horizontal Faders + Glowing BitchBoy Logo + Center Inspector HUD (Width: 280)
+                        VStack(alignment: .leading, spacing: 10) {
+                            section5HorizontalFaders
+                                .frame(width: 280)
 
-                                centerInspectorHUD
-                                    .frame(width: 254, height: 256)
+                            // Glowing BitchBoy Mascot Logo
+                            BitchBoyGlowingLogoView(auraColor: engine.currentTheme.accentPrimary) {
+                                SoundEffect.mascotSqueak.play(with: engine.soundPack)
+                                engine.log("✨ BITCHBOY LOGO ACTIVATED")
                             }
-                            .frame(width: 254)
+                            .frame(width: 280, height: 58, alignment: .center)
 
-                            // Far-Right Column: 2x4 Knobs + Official Mascot & 3x3 Keypad (Width: 194)
-                            VStack(alignment: .center, spacing: 10) {
-                                section6RotaryKnobs
-                                    .frame(width: 194)
-
-                                section3KeypadAndMascot
-                                    .frame(width: 194)
-                            }
-                            .frame(width: 194)
+                            centerInspectorHUD
+                                .frame(width: 280, height: 360)
                         }
-                        .frame(width: 462)
+                        .frame(width: 280)
+
+                        Spacer().frame(width: 24)
+
+                        // Far-Right Column: 2x4 Knobs + Official Mascot & 3x3 Keypad (Width: 226)
+                        VStack(alignment: .center, spacing: 10) {
+                            section6RotaryKnobs
+                                .frame(width: 226)
+
+                            section3KeypadAndMascot
+                                .frame(width: 226)
+                        }
+                        .frame(width: 226)
                     }
+                    .frame(width: engine.centerConsoleWidth, height: engine.centerDeckHeight)
 
                     // BOTTOM CONSOLE RACK (Expansion Bay for modules placed in bottom rack!)
                     if !engine.bottomRackModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
-                        VStack(alignment: .leading, spacing: 5) {
+                        VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 5) {
                                 Image(systemName: "rectangle.bottomthird.inset.filled")
                                     .font(.system(size: 12, weight: .bold))
@@ -8730,20 +11159,22 @@ struct ContentView: View {
                             }
                             .padding(.horizontal, 4)
 
-                            ScrollView([.horizontal], showsIndicators: true) {
-                                HStack(alignment: .top, spacing: 16) {
-                                    ForEach(engine.bottomRackModules.filter { !$0.isHardwareModule }) { mod in
-                                        dynamicModuleContainer(for: mod, in: .bottomRack)
-                                    }
-                                    if engine.isRearrangingModules {
-                                        dropTargetCard(forZone: .bottomRack)
-                                            .frame(width: 260)
-                                    }
+                            let nonHw = engine.bottomRackModules.filter { !$0.isHardwareModule }
+                            let availableW = max(760, engine.centerConsoleWidth - 20)
+                            let slotW = (availableW - 12) / 2
+
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(nonHw) { mod in
+                                    dynamicModuleContainer(for: mod, in: .bottomRack)
                                 }
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 6)
+                                if engine.isRearrangingModules && nonHw.count < 2 {
+                                    dropTargetCard(forZone: .bottomRack)
+                                        .frame(width: nonHw.isEmpty ? availableW : slotW)
+                                }
                             }
-                            .frame(maxWidth: 894)
+                            .padding(.horizontal, 2)
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: availableW, alignment: .leading)
                         }
                         .padding(8)
                         .background(Color.black.opacity(0.35))
@@ -8757,38 +11188,40 @@ struct ContentView: View {
                                     lineWidth: engine.currentTheme.isRainbow ? 1.8 : 1
                                 )
                         )
+                        .clipped()
                         .onDrop(of: [.plainText], delegate: ZoneDropDelegate(targetZone: .bottomRack, engine: engine))
-                    } else if engine.chassisContentHeight > 660 {
-                        bottomRackEmptyShelf
                     }
                 }
                 .frame(width: engine.centerConsoleWidth, height: engine.chassisContentHeight, alignment: .top)
 
                 // RIGHT WING (Modules placed in Right Wing)
-                if !engine.rightWingModules.filter({ !$0.isHardwareModule }).isEmpty || engine.isRearrangingModules {
+                if engine.hasRightWing {
                     HStack(alignment: .top, spacing: 10) {
                         WingHorizontalResizeDivider(width: $engine.rightWingWidth, isLeft: false)
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(engine.rightWingModules.filter { !$0.isHardwareModule }) { mod in
-                                dynamicModuleContainer(for: mod, in: .rightWing)
+                        ScrollView([.vertical], showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(engine.rightWingModules.filter { !$0.isHardwareModule }) { mod in
+                                    dynamicModuleContainer(for: mod, in: .rightWing, customWidth: effRightW)
+                                }
+                                if engine.isRearrangingModules {
+                                    dropTargetCard(forZone: .rightWing)
+                                }
                             }
-                            if engine.isRearrangingModules {
-                                dropTargetCard(forZone: .rightWing)
-                            }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
-                        .frame(width: engine.rightWingWidth)
+                        .frame(width: effRightW)
                         .frame(height: engine.chassisContentHeight, alignment: .top)
                     }
-                    .frame(width: engine.totalRightWingWidth, alignment: .trailing)
+                    .frame(width: effRightW + 24, alignment: .trailing)
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.vertical, 20)
-            .frame(width: engine.chassisTotalWidth, alignment: .leading)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+            .frame(width: chassisWidth, alignment: .leading)
         }
-        .frame(width: engine.chassisTotalWidth, height: engine.chassisContentHeight + 40)
+        .frame(width: chassisWidth, height: engine.chassisContentHeight + 44)
     }
 
     private var bottomRackEmptyShelf: some View {
@@ -8892,6 +11325,8 @@ struct ContentView: View {
             return AnyView(keypadStudioPanel(isSpotlight: isSpotlight))
         case .colorPickerHUD:
             return AnyView(colorPickerStudioPanel(isSpotlight: isSpotlight))
+        case .hardwareMIDIFilter:
+            return AnyView(hardwareMIDIFilterStudioPanel(isSpotlight: isSpotlight))
         }
     }
 
@@ -8905,7 +11340,7 @@ struct ContentView: View {
                     Image(systemName: "arrow.up.and.down")
                         .font(.system(size: 9.5, weight: .bold))
                     Text(engine.moduleSizePresetLabel(module))
-                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .lineLimit(1)
                 }
                 .foregroundColor(engine.currentTheme.accentPrimary)
@@ -8933,7 +11368,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.left.and.right")
                             .font(.system(size: 9.5, weight: .bold))
                         Text(engine.moduleWidthPresetLabel(module))
-                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .lineLimit(1)
                     }
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
@@ -9023,6 +11458,7 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .hoverGrow(1.08)
             .help("Center Module on Screen with Blurred Background")
+            .accessibilityLabel(engine.spotlightModule == module ? "Exit module spotlight" : "Center \(module.shortName) module in spotlight")
             .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(2)
 
@@ -9032,15 +11468,16 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(module)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(Color(white: 0.90))
-                        .frame(width: 22, height: 22)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
                 .hoverGrow(1.08)
                 .help("Pop Out Module Into Its Own Window")
+                .accessibilityLabel("Pop out \(module.shortName) module into standalone window")
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(2)
             }
@@ -9049,19 +11486,31 @@ struct ContentView: View {
         .layoutPriority(2)
     }
 
-    private func dynamicModuleContainer(for mod: StudioModuleID, in zone: ModuleZone) -> some View {
+    private func dynamicModuleContainer(for mod: StudioModuleID, in zone: ModuleZone, customWidth: CGFloat? = nil) -> some View {
         let isDetached = engine.detachedModules.contains(mod)
         let targetHeight = engine.moduleCustomHeights[mod] ?? mod.defaultSlotHeight
         let cardWidth: CGFloat = {
+            if let customWidth = customWidth {
+                return customWidth
+            }
             switch zone {
             case .leftWing: return max(380, engine.leftWingWidth)
             case .rightWing: return max(380, engine.rightWingWidth)
-            case .bottomRack: return max(380, engine.moduleCustomWidths[mod] ?? 435)
+            case .bottomRack:
+                let activeModules = engine.bottomRackModules.filter { !$0.isHardwareModule }
+                let effectiveSlots = activeModules.count + (engine.isRearrangingModules && activeModules.count < 2 ? 1 : 0)
+                let availableW = max(760, engine.centerConsoleWidth - 20)
+                if effectiveSlots <= 1 {
+                    return availableW
+                } else {
+                    let totalGaps = CGFloat(effectiveSlots - 1) * 12
+                    return (availableW - totalGaps) / CGFloat(effectiveSlots)
+                }
             case .floating: return max(380, engine.moduleCustomWidths[mod] ?? 435)
             }
         }()
 
-        return VStack(spacing: 0) {
+        let cardBase = VStack(spacing: 0) {
             // If in Rearrange Mode, show the Quick Move / Zone Transfer pill bar above card
             if engine.isRearrangingModules {
                 moduleRearrangeActionBar(for: mod, currentZone: zone)
@@ -9076,13 +11525,14 @@ struct ContentView: View {
                     // Module Content (Internally scrollable so NOTHING ever cuts off!)
                     moduleContentView(for: mod)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .clipped()
 
                     // Interactive Bottom Drag-to-Resize Handle Bar
                     moduleResizeHandleBar(for: mod, currentHeight: targetHeight, zone: zone)
                 }
                 .frame(width: cardWidth)
                 .frame(height: targetHeight)
-                .clipped()
+                .background(Color(red: 0.10, green: 0.12, blue: 0.15).opacity(0.85))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
@@ -9091,21 +11541,33 @@ struct ContentView: View {
                                 ? AnyShapeStyle(Color(red: 0.96, green: 0.76, blue: 0.18))
                                 : (engine.currentTheme.isRainbow
                                     ? AnyShapeStyle(engine.currentTheme.rainbowGradient)
-                                    : AnyShapeStyle(Color.clear)),
-                            style: StrokeStyle(lineWidth: (engine.isRearrangingModules || engine.currentTheme.isRainbow) ? (engine.isRearrangingModules ? 2.0 : 1.5) : 0, dash: engine.isRearrangingModules ? [6, 4] : [])
+                                    : AnyShapeStyle(LinearGradient(
+                                        colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ))),
+                            style: StrokeStyle(lineWidth: engine.isRearrangingModules ? 2.0 : 1.0, dash: engine.isRearrangingModules ? [6, 4] : [])
                         )
                 )
             }
         }
         .frame(width: cardWidth)
         .clipped()
-        .onDrag {
-            engine.draggingModule = mod
-            return NSItemProvider(object: mod.rawValue as NSString)
-        }
-        .onDrop(of: [.plainText], delegate: ModuleSlotDropDelegate(targetModule: mod, engine: engine))
         .contextMenu {
             moduleContextMenu(for: mod, zone: zone)
+        }
+
+        return Group {
+            if engine.isRearrangingModules {
+                cardBase
+                    .onDrag {
+                        engine.draggingModule = mod
+                        return NSItemProvider(object: mod.rawValue as NSString)
+                    }
+                    .onDrop(of: [.plainText], delegate: ModuleSlotDropDelegate(targetModule: mod, engine: engine))
+            } else {
+                cardBase
+            }
         }
     }
 
@@ -9113,7 +11575,7 @@ struct ContentView: View {
         @Binding var width: CGFloat
         let isLeft: Bool
         let minWidth: CGFloat = 350
-        let maxWidth: CGFloat = 580
+        let maxWidth: CGFloat = 1200
         let defaultWidth: CGFloat = 380
 
         @State private var isHovered: Bool = false
@@ -9241,14 +11703,14 @@ struct ContentView: View {
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.22))
             Text("MOVE:")
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9, weight: .bold, design: .default))
                 .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.22))
 
             Spacer(minLength: 2)
 
             Button("⇦ LW") { engine.moveModuleToZone(mod, zone: .leftWing) }
                 .buttonStyle(.plain)
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .padding(.horizontal, 4.5)
                 .padding(.vertical, 2)
                 .background(currentZone == .leftWing ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
@@ -9257,7 +11719,7 @@ struct ContentView: View {
 
             Button("⇨ RW") { engine.moveModuleToZone(mod, zone: .rightWing) }
                 .buttonStyle(.plain)
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .padding(.horizontal, 4.5)
                 .padding(.vertical, 2)
                 .background(currentZone == .rightWing ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
@@ -9266,7 +11728,7 @@ struct ContentView: View {
 
             Button("⇩ RACK") { engine.moveModuleToZone(mod, zone: .bottomRack) }
                 .buttonStyle(.plain)
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .padding(.horizontal, 4.5)
                 .padding(.vertical, 2)
                 .background(currentZone == .bottomRack ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
@@ -9275,14 +11737,16 @@ struct ContentView: View {
 
             Button(action: { engine.popOutModuleToWindow(mod) }) {
                 Image(systemName: "macwindow.badge.plus")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .padding(.horizontal, 4.5)
-                    .padding(.vertical, 2)
+                    .font(.system(size: 11, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3.5)
                     .background(engine.currentTheme.accentPrimary.opacity(0.28))
                     .foregroundColor(engine.currentTheme.accentPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
             }
             .buttonStyle(.plain)
+            .hoverGrow(1.08)
+            .accessibilityLabel("Pop out \(mod.shortName) module into standalone window")
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 2.5)
@@ -9302,10 +11766,10 @@ struct ContentView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
                 Text("+ EXPANSION SLOT: \(zone.displayName)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .bold, design: .default))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
                 Text("Drag module here or tap ⇦ LW / ⇨ RW / ⇩ RACK on any card")
-                    .font(.system(size: 7, design: .monospaced))
+                    .font(.system(size: 9, weight: .regular, design: .default))
                     .foregroundColor(Color.white.opacity(0.6))
             }
             .padding(.vertical, 16)
@@ -9594,6 +12058,7 @@ struct ContentView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 5))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Delete custom sound for \(sfx.displayName)")
                             }
                         }
                         .padding(.horizontal, 10)
@@ -9697,6 +12162,7 @@ struct ContentView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Delete active custom theme")
                     }
 
                     Button(action: {
@@ -10011,7 +12477,7 @@ struct ContentView: View {
                             .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.currentTheme.headerText)
 
-                        ScrollView {
+                        ScrollView([.vertical], showsIndicators: false) {
                             Text(release.body ?? "No release notes provided for this version.")
                                 .font(.system(size: 8, design: .monospaced))
                                 .foregroundColor(Color(white: 0.88))
@@ -10099,7 +12565,7 @@ struct ContentView: View {
                         }
                         .buttonStyle(.plain)
 
-                        if let rel = engine.latestRelease, let url = URL(string: rel.htmlUrl) {
+                        if let rel = engine.latestRelease, let url = URL(string: rel.htmlURL) {
                             Button(action: {
                                 NSWorkspace.shared.open(url)
                             }) {
@@ -10219,7 +12685,7 @@ struct ContentView: View {
                 }
             }
 
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 if engine.leftWingTab == "TELEMETRY" {
                     leftWingTelemetryScopeContent
                 } else if engine.leftWingTab == "MACROS" {
@@ -10249,7 +12715,7 @@ struct ContentView: View {
                     Image(systemName: "dot.radiowaves.left.and.right")
                         .foregroundColor(engine.virtualOutEnabled ? Color(red: 0.2, green: 0.96, blue: 0.65) : .gray)
                     Text("VIRTUAL PORT (ALL DAWS)")
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                     Spacer()
                     Toggle("", isOn: $engine.virtualOutEnabled)
@@ -10258,10 +12724,10 @@ struct ContentView: View {
                         .frame(width: 34, height: 16)
                 }
                 Text("Port Name: 'BitchBoy Virtual Out'")
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text("Select 'BitchBoy Virtual Out' in Ableton, Logic, QLab, Resolume, or any synth!")
-                    .font(.system(size: 7, design: .monospaced))
+                    .font(.system(size: 12.0, design: .monospaced))
                     .foregroundColor(Color(white: 0.62))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -10274,13 +12740,13 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("SEND TO PROGRAMS / PORTS:")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.headerText)
                     Spacer()
                     Button("ALL APPS") {
                         engine.selectAllExternalOutputs()
                     }
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.white.opacity(0.12))
@@ -10291,7 +12757,7 @@ struct ContentView: View {
                     Button("↻") {
                         engine.scanForBitchBoy()
                     }
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.white.opacity(0.12))
@@ -10300,11 +12766,11 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                 }
 
-                ScrollView {
+                ScrollView([.vertical], showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 3) {
                         if engine.availableOutputTargets.isEmpty {
                             Text("No external MIDI ports detected. Use 'BitchBoy Virtual Out' or enable IAC Driver.")
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.system(size: 12.0, design: .monospaced))
                                 .foregroundColor(Color(white: 0.55))
                                 .padding(4)
                         } else {
@@ -10315,15 +12781,15 @@ struct ContentView: View {
                                 }) {
                                     HStack(spacing: 6) {
                                         Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                                            .font(.system(size: 9))
+                                            .font(.system(size: 14.0))
                                             .foregroundColor(isSelected ? engine.currentTheme.accentPrimary : Color(white: 0.5))
                                         VStack(alignment: .leading, spacing: 0) {
                                             Text(target.name)
-                                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                                                 .foregroundColor(.white)
                                                 .lineLimit(1)
                                             Text(target.isHardwareBitchBoy ? "Hardware Controller Port" : "External App / Synth / Bus")
-                                                .font(.system(size: 6.5, design: .monospaced))
+                                                .font(.system(size: 11.5, design: .monospaced))
                                                 .foregroundColor(target.isHardwareBitchBoy ? Color.orange : Color(white: 0.55))
                                         }
                                         Spacer()
@@ -10351,7 +12817,7 @@ struct ContentView: View {
                             Image(systemName: "slider.horizontal.below.rectangle")
                             Text("AUDIO MIDI SETUP")
                         }
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                         .background(Color.white.opacity(0.08))
@@ -10387,9 +12853,9 @@ struct ContentView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "photo.badge.checkmark")
-                                .font(.system(size: 7))
+                                .font(.system(size: 12.0))
                             Text("MIDI STUDIO ICON")
-                                .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.0, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity)
@@ -10405,13 +12871,13 @@ struct ContentView: View {
             // 3. Channel Remapper, Transpose & Velocity Curve
             VStack(alignment: .leading, spacing: 5) {
                 Text("MIDI TRANSFORMER & FILTERS")
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
 
                 // Output Channel Picker
                 HStack {
                     Text("OUT CHANNEL:")
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Spacer()
                     Picker("", selection: $engine.remapChannel) {
@@ -10421,45 +12887,45 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                     .frame(width: 118)
                 }
 
                 // Transpose Semitones
                 HStack(spacing: 4) {
                     Text("TRANSPOSE:")
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Spacer()
                     Button("-12") { engine.transposeSemitones = max(-24, engine.transposeSemitones - 12) }
-                        .buttonStyle(.plain).font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 4).padding(.vertical, 2).background(Color.white.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 3))
                     Button("-") { engine.transposeSemitones = max(-24, engine.transposeSemitones - 1) }
-                        .buttonStyle(.plain).font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5).padding(.vertical, 2).background(Color.white.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 3))
                     Text(engine.transposeSemitones >= 0 ? "+\(engine.transposeSemitones)" : "\(engine.transposeSemitones)")
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                         .frame(width: 28)
                     Button("+") { engine.transposeSemitones = min(24, engine.transposeSemitones + 1) }
-                        .buttonStyle(.plain).font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5).padding(.vertical, 2).background(Color.white.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 3))
                     Button("+12") { engine.transposeSemitones = min(24, engine.transposeSemitones + 12) }
-                        .buttonStyle(.plain).font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 4).padding(.vertical, 2).background(Color.white.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 3))
                 }
 
                 // Velocity Curve
                 HStack(spacing: 3) {
                     Text("CURVE:")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Spacer()
                     ForEach(MIDIVelocityCurve.allCases) { curve in
                         Button(curve.rawValue) {
                             engine.velocityCurve = curve
                         }
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 3)
                         .background(engine.velocityCurve == curve ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -10489,7 +12955,7 @@ struct ContentView: View {
                         Image(systemName: "music.note.list")
                         Text("TEST CHORD")
                     }
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .background(Color(red: 0.14, green: 0.45, blue: 0.36))
@@ -10505,7 +12971,7 @@ struct ContentView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("PANIC OFF")
                     }
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .background(Color(red: 0.55, green: 0.16, blue: 0.16))
@@ -10519,15 +12985,15 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text("TX OUT STREAM")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.5))
                     Spacer()
                     Text("PKTS: \(engine.txPacketCount)")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
                 Text(engine.lastRoutedMessage)
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(red: 0.3, green: 0.98, blue: 0.75))
                     .lineLimit(1)
             }
@@ -10540,7 +13006,7 @@ struct ContentView: View {
     private var leftWingTelemetryScopeContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("8 VERTICAL FADERS (CC 0–7)")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             HStack(alignment: .bottom, spacing: 6) {
@@ -10548,7 +13014,7 @@ struct ContentView: View {
                     let val = engine.controls[49 + i].liveValue
                     VStack(spacing: 2) {
                         Text("\(val)")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(engine.currentTheme.accentPrimary)
                         ZStack(alignment: .bottom) {
                             RoundedRectangle(cornerRadius: 3)
@@ -10559,7 +13025,7 @@ struct ContentView: View {
                                 .frame(width: 20, height: max(3, CGFloat(val) / 127.0 * 42.0))
                         }
                         Text("VF\(i+1)")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.65))
                     }
                 }
@@ -10570,7 +13036,7 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Text("4 HORIZ FADERS & 8 KNOBS (CC 8–11, 20–27)")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             VStack(spacing: 3) {
@@ -10578,7 +13044,7 @@ struct ContentView: View {
                     let item = engine.controls[idx]
                     HStack(spacing: 5) {
                         Text(item.label)
-                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                             .frame(width: 26, alignment: .leading)
                         GeometryReader { geo in
@@ -10591,7 +13057,7 @@ struct ContentView: View {
                         }
                         .frame(height: 6)
                         Text(String(format: "%03d", item.liveValue))
-                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(red: 0.96, green: 0.72, blue: 0.28))
                             .frame(width: 24, alignment: .trailing)
                     }
@@ -10602,19 +13068,19 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Text("LIVE MIDI HEX PACKET MONITOR")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
-            ScrollView {
+            ScrollView([.vertical], showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
                     if engine.routerPacketHistory.isEmpty {
                         Text("Waiting for MIDI packets...")
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.system(size: 12.0, design: .monospaced))
                             .foregroundColor(Color(white: 0.5))
                     } else {
                         ForEach(engine.routerPacketHistory, id: \.self) { pkt in
                             Text(pkt)
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.system(size: 12.0, design: .monospaced))
                                 .foregroundColor(Color(red: 0.28, green: 0.96, blue: 0.74))
                         }
                     }
@@ -10634,7 +13100,7 @@ struct ContentView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MASTER CLOCK // TAP TEMPO")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.headerText)
                     Text("\(Int(engine.tapTempoBPM)) BPM (FX: \(String(format: "%.1fx", engine.fxSpeed)))")
                         .font(.system(size: 11, weight: .heavy, design: .monospaced))
@@ -10645,7 +13111,7 @@ struct ContentView: View {
                     engine.registerTapTempo()
                 }) {
                     Text("🥁 TAP BPM")
-                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                         .background(engine.currentTheme.accentPrimary)
@@ -10659,7 +13125,7 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Text("8 INSTANT HARDWARE SCENE MACROS")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
@@ -10673,7 +13139,7 @@ struct ContentView: View {
                     for i in 61..<69 { engine.setControlLiveValue(index: i, value: 64) }
                 }
                 macroTriggerPad(title: "PARTY SPARK LEDS", icon: "sparkles") {
-                    let pal: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 3]
+                    let pal: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 3]
                     for i in 0..<49 {
                         let v = pal.randomElement() ?? 78
                         engine.controls[i].idleVelocity = v
@@ -10697,7 +13163,7 @@ struct ContentView: View {
             }
 
             Text("⌨️ QUICK QWERTY KEYBOARD PROFILES")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
@@ -10798,7 +13264,7 @@ struct ContentView: View {
                 }
             }
 
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 if engine.showControlSubTab == "FEEDBACK" {
                     showControlFeedbackContent
                 } else {
@@ -10825,23 +13291,23 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.seal.fill")
                         .foregroundColor(.green)
-                        .font(.system(size: 9))
+                        .font(.system(size: 14.0))
                     Text("Patch 1 - BitchBoy (BLOCK SYSTEM)")
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                     Spacer()
                     Text("DEV: \(engine.mscDeviceID == 127 ? "ALL" : "\(engine.mscDeviceID)")")
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
 
                 Text("CoreMIDI destination online • Auto-discovered by QLab, EOS, and GrandMA")
-                    .font(.system(size: 6.8, design: .monospaced))
+                    .font(.system(size: 11.5, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
 
                 Toggle(isOn: $engine.mscAutoTriggerOnInbound) {
                     Text("Auto-Trigger Presets on Inbound MSC (GO / STOP / LOAD)")
-                        .font(.system(size: 7.2, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.85))
                 }
                 .toggleStyle(.checkbox)
@@ -10855,14 +13321,14 @@ struct ContentView: View {
             // MSC Transmitter Parameters
             VStack(alignment: .leading, spacing: 4) {
                 Text("TRANSMIT MSC BROADCAST:")
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
 
                 HStack(spacing: 6) {
                     // Device ID
                     VStack(alignment: .leading, spacing: 1) {
                         Text("DEVICE ID:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         Picker("", selection: $engine.mscDeviceID) {
                             Text("1 (Default)").tag(UInt8(1))
@@ -10881,7 +13347,7 @@ struct ContentView: View {
                     // Format
                     VStack(alignment: .leading, spacing: 1) {
                         Text("FORMAT:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         Picker("", selection: $engine.mscCommandFormat) {
                             ForEach(MSCCommandFormat.allCases) { fmt in
@@ -10898,10 +13364,10 @@ struct ContentView: View {
                     // Cue Number
                     VStack(alignment: .leading, spacing: 1) {
                         Text("CUE #:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         TextField("e.g. 1.0", text: $engine.mscCueNumber)
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .textFieldStyle(.plain)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 3)
@@ -10912,10 +13378,10 @@ struct ContentView: View {
                     // Cue List
                     VStack(alignment: .leading, spacing: 1) {
                         Text("CUE LIST (OPTIONAL):")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         TextField("e.g. Main", text: $engine.mscCueList)
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .textFieldStyle(.plain)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 3)
@@ -10955,32 +13421,32 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text("MSC PACKET MONITOR (TX / RX):")
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Spacer()
                     Button("CLEAR") {
                         engine.clearMSCLogHistory()
                     }
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
                     .buttonStyle(.plain)
                 }
 
-                ScrollView {
+                ScrollView([.vertical], showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 2) {
                         if engine.mscLogHistory.isEmpty {
                             Text("Ready. Listening on 'BitchBoy (BLOCK SYSTEM)' and transmitting on GO / STOP.")
-                                .font(.system(size: 6.8, design: .monospaced))
+                                .font(.system(size: 11.5, design: .monospaced))
                                 .foregroundColor(Color(white: 0.5))
                                 .padding(4)
                         } else {
                             ForEach(engine.mscLogHistory) { msg in
                                 HStack(spacing: 4) {
                                     Text(msg.timeString)
-                                        .font(.system(size: 6.5, design: .monospaced))
+                                        .font(.system(size: 11.5, design: .monospaced))
                                         .foregroundColor(Color(white: 0.5))
                                     Text(msg.summary)
-                                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                                         .foregroundColor(msg.isOutbound ? Color.cyan : Color.green)
                                 }
                                 .padding(.horizontal, 3)
@@ -11003,7 +13469,7 @@ struct ContentView: View {
     private func mscTransportButton(title: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
@@ -11026,7 +13492,7 @@ struct ContentView: View {
                         Image(systemName: "slider.horizontal.2.square.on.square")
                         Text("KEY & FADER MAPPINGS (65)")
                     }
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(engine.oscStudioMode == "MAPPINGS" ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
@@ -11048,7 +13514,7 @@ struct ContentView: View {
                         Image(systemName: "paperplane.fill")
                         Text("MANUAL PACKET TESTER")
                     }
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(engine.oscStudioMode == "TRANSMITTER" ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
@@ -11077,16 +13543,16 @@ struct ContentView: View {
     private var showControlOSCContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("CUSTOM OSC (OPEN SOUND CONTROL) TRANSMITTER:")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("HOST IP:")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("127.0.0.1", text: $engine.customOSCHost)
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11096,10 +13562,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("PORT:")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("53000", value: $engine.customOSCPort, formatter: NumberFormatter())
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11110,10 +13576,10 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("OSC ADDRESS:")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
                 TextField("/cue/selected/start", text: $engine.customOSCAddress)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 3)
@@ -11124,7 +13590,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("ARG TYPE:")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     Picker("", selection: $engine.customOSCArgType) {
                         Text("NONE (Bang)").tag("NONE")
@@ -11142,10 +13608,10 @@ struct ContentView: View {
                 if engine.customOSCArgType != "NONE" && !engine.customOSCArgType.starts(with: "BOOLEAN") {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("ARG VALUE:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         TextField("Value", text: $engine.customOSCArgValue)
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .textFieldStyle(.plain)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 3)
@@ -11169,7 +13635,7 @@ struct ContentView: View {
                     Image(systemName: "paperplane.fill")
                     Text("TRANSMIT OSC UDP")
                 }
-                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
@@ -11182,7 +13648,7 @@ struct ContentView: View {
             // Quick Presets
             VStack(alignment: .leading, spacing: 3) {
                 Text("QUICK APPLICATION PRESETS:")
-                    .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.65))
 
                 HStack(spacing: 3) {
@@ -11205,7 +13671,7 @@ struct ContentView: View {
                         engine.sendCustomOSC(host: engine.customOSCHost, port: 8000, address: "/eos/key/go_0", argType: "NONE", argValue: "")
                     }
                 }
-                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                 .buttonStyle(.plain)
                 .foregroundColor(engine.currentTheme.accentPrimary)
             }
@@ -11217,10 +13683,10 @@ struct ContentView: View {
             Toggle(isOn: $engine.midiToOSCMappingActive) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("LIVE BITCHBOY OSC ENGINE (ACTIVE)")
-                        .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.midiToOSCMappingActive ? Color.green : Color.white)
                     Text("Keys, Faders, & Encoders broadcast mapped OSC addresses via UDP")
-                        .font(.system(size: 6.2, design: .monospaced))
+                        .font(.system(size: 11.0, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                 }
             }
@@ -11246,10 +13712,10 @@ struct ContentView: View {
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("MIDI ➔ OSC MAPPING MATRIX")
-                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.headerText)
                     Text("Map any button or fader to send custom OSC messages")
-                        .font(.system(size: 6.5, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                 }
                 Spacer()
@@ -11266,14 +13732,14 @@ struct ContentView: View {
             // Quick Presets Bar
             VStack(alignment: .leading, spacing: 3) {
                 Text("QUICK 1-CLICK TEMPLATES:")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.55))
 
                 VStack(spacing: 3) {
                     HStack(spacing: 3) {
                         Button(action: { engine.applyOSCAutoMapTemplate() }) {
                             Text("⚡ AUTO-MAP")
-                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 3)
@@ -11287,7 +13753,7 @@ struct ContentView: View {
 
                         Button(action: { engine.applyOSCQLabTemplate() }) {
                             Text("🎭 QLAB")
-                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 3)
@@ -11301,7 +13767,7 @@ struct ContentView: View {
 
                         Button(action: { engine.applyOSCResolumeTemplate() }) {
                             Text("🎬 RESOLUME")
-                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 3)
@@ -11317,7 +13783,7 @@ struct ContentView: View {
                     HStack(spacing: 3) {
                         Button(action: { engine.applyOSCEosTemplate() }) {
                             Text("💡 ETC EOS")
-                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 3)
@@ -11331,7 +13797,7 @@ struct ContentView: View {
 
                         Button(action: { engine.clearAllOSCMappings() }) {
                             Text("🧹 CLEAR ALL")
-                                .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 3)
@@ -11350,10 +13816,10 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("GLOBAL TARGET IP:")
-                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("127.0.0.1", text: $engine.customOSCHost)
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2.5)
@@ -11363,10 +13829,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("PORT:")
-                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("53000", value: $engine.customOSCPort, formatter: NumberFormatter())
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2.5)
@@ -11376,10 +13842,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("SEARCH / FILTER:")
-                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("Search key/fader...", text: $engine.midiToOSCSearchText)
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2.5)
@@ -11411,7 +13877,7 @@ struct ContentView: View {
                         .font(.system(size: 14))
                         .foregroundColor(Color(white: 0.4))
                     Text("No matching controls")
-                        .font(.system(size: 7.5, design: .monospaced))
+                        .font(.system(size: 12.5, design: .monospaced))
                         .foregroundColor(Color(white: 0.5))
                 }
                 .frame(maxWidth: .infinity)
@@ -11436,7 +13902,7 @@ struct ContentView: View {
             SoundEffect.knobTick.play(with: engine.soundPack)
         }) {
             Text(title)
-                .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .lineLimit(1)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity)
@@ -11469,7 +13935,7 @@ struct ContentView: View {
 
                 // Kind Badge
                 Text(isKey ? "KEY #\(item.number)" : (isFader ? "FADER CC\(item.number)" : "KNOB CC\(item.number)"))
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(engine.controls[index].oscEnabled ? engine.currentTheme.accentPrimary.opacity(0.20) : Color.white.opacity(0.08))
@@ -11478,14 +13944,14 @@ struct ContentView: View {
 
                 // Control Name / Label
                 Text(item.label)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: 14.0, weight: .bold, design: .monospaced))
                     .foregroundColor(.white)
 
                 // Live status pill
                 if isKey {
                     if item.isPressed {
                         Text("PRESSED")
-                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(Color.green)
@@ -11494,7 +13960,7 @@ struct ContentView: View {
                     }
                 } else {
                     Text("\(item.liveValue)")
-                        .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
 
@@ -11507,9 +13973,9 @@ struct ContentView: View {
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: 13.0))
                         Text("TEST")
-                            .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -11525,10 +13991,10 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CUSTOM ALIAS:")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.82))
                     TextField(item.label, text: $engine.controls[index].customName)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 14.0, weight: .medium, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 3)
@@ -11539,10 +14005,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("OSC ADDRESS PATH:")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.82))
                     TextField(isKey ? "/bitchboy/key/\(index + 1)" : "/bitchboy/fader/\(max(1, index - 48))", text: $engine.controls[index].oscAddress)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 14.0, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 3)
@@ -11556,7 +14022,7 @@ struct ContentView: View {
                 // Arg Type Picker
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ARG TYPE:")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.82))
                     Picker("", selection: $engine.controls[index].oscArgType) {
                         Text("FLOAT").tag("FLOAT")
@@ -11568,7 +14034,7 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                     .frame(height: 20)
                 }
                 .frame(width: 95)
@@ -11577,7 +14043,7 @@ struct ContentView: View {
                     // Send on Release Checkbox & Release Value
                     VStack(alignment: .leading, spacing: 2) {
                         Text("ON RELEASE:")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.82))
                         HStack(spacing: 4) {
                             Button(action: {
@@ -11591,7 +14057,7 @@ struct ContentView: View {
 
                             if engine.controls[index].oscSendRelease {
                                 TextField("0.0", text: $engine.controls[index].oscReleaseVal)
-                                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                                     .textFieldStyle(.plain)
                                     .frame(width: 40)
                                     .padding(.horizontal, 4)
@@ -11605,10 +14071,10 @@ struct ContentView: View {
                     // Fader / Knob Min and Max Range
                     VStack(alignment: .leading, spacing: 2) {
                         Text("MIN VAL:")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.82))
                         TextField("0.0", value: $engine.controls[index].oscMinVal, formatter: NumberFormatter())
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                            .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                             .textFieldStyle(.plain)
                             .frame(width: 48)
                             .padding(.horizontal, 4)
@@ -11619,10 +14085,10 @@ struct ContentView: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("MAX VAL:")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.82))
                         TextField("1.0", value: $engine.controls[index].oscMaxVal, formatter: NumberFormatter())
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                            .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                             .textFieldStyle(.plain)
                             .frame(width: 48)
                             .padding(.horizontal, 4)
@@ -11647,16 +14113,16 @@ struct ContentView: View {
     private var showControlArtNetContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ART-NET 4 DMX TRANSMITTER (UDP 6454):")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("HOST / BROADCAST IP:")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("255.255.255.255", text: $engine.artNetHost)
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11666,10 +14132,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("UNIVERSE (0-32767):")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("0", value: $engine.artNetUniverse, formatter: NumberFormatter())
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11684,7 +14150,7 @@ struct ContentView: View {
                     engine.sendArtNetFullRig()
                     SoundEffect.presetSwitch.play(with: engine.soundPack)
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
@@ -11696,7 +14162,7 @@ struct ContentView: View {
                     engine.sendArtNetBlackout()
                     SoundEffect.presetSwitch.play(with: engine.soundPack)
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.white)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
@@ -11708,7 +14174,7 @@ struct ContentView: View {
                     engine.sendArtNetRGBChase()
                     SoundEffect.presetSwitch.play(with: engine.soundPack)
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
@@ -11721,10 +14187,10 @@ struct ContentView: View {
             Toggle(isOn: $engine.artNetMirrorHardwareFaders) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("MIRROR HARDWARE FADERS VF1–VF8 TO DMX CH 1–8")
-                        .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.artNetMirrorHardwareFaders ? Color.green : Color.white)
                     Text("Moving physical sliders immediately broadcasts UDP DMX packets")
-                        .font(.system(size: 6.2, design: .monospaced))
+                        .font(.system(size: 11.0, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                 }
             }
@@ -11736,17 +14202,17 @@ struct ContentView: View {
             // 8 Direct DMX Channel Sliders
             VStack(alignment: .leading, spacing: 2) {
                 Text("DMX CHANNELS 1–8 LIVE FADERS:")
-                    .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.65))
 
                 HStack(spacing: 4) {
                     ForEach(0..<8) { ch in
                         VStack(spacing: 1) {
                             Text("Ch\(ch+1)")
-                                .font(.system(size: 5.5, weight: .bold, design: .monospaced))
+                                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                                 .foregroundColor(Color(white: 0.6))
                             Text("\(engine.artNetChannels[ch])")
-                                .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.0, weight: .heavy, design: .monospaced))
                                 .foregroundColor(engine.currentTheme.accentPrimary)
                             Slider(
                                 value: Binding(
@@ -11776,16 +14242,16 @@ struct ContentView: View {
     private var showControlsACNContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ANSI E1.31 sACN TRANSMITTER (UDP 5568):")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("UNIVERSE (1-63999):")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("1", value: $engine.sacnUniverse, formatter: NumberFormatter())
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11795,10 +14261,10 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("PRIORITY (1-200):")
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("100", value: $engine.sacnPriority, formatter: NumberFormatter())
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -11809,10 +14275,10 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("UNICAST IP (LEAVE EMPTY FOR MULTICAST):")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
                 TextField("Multicast 239.255.x.y", text: $engine.sacnHost)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 13.0, weight: .bold, design: .monospaced))
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 3)
@@ -11825,7 +14291,7 @@ struct ContentView: View {
                     engine.sendsACNFullRig()
                     SoundEffect.presetSwitch.play(with: engine.soundPack)
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
@@ -11837,7 +14303,7 @@ struct ContentView: View {
                     engine.sendsACNBlackout()
                     SoundEffect.presetSwitch.play(with: engine.soundPack)
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .foregroundColor(.white)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
@@ -11855,16 +14321,16 @@ struct ContentView: View {
     private var showControlFeedbackContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("CUSTOMIZABLE HARDWARE MIDI FEEDBACK:")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
             Toggle(isOn: $engine.hardwareFeedbackEnabled) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("LOCAL HARDWARE LED FEEDBACK")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                     Text("When ON, pressing keys immediately updates BitchBoy LEDs locally based on feedback mode.")
-                        .font(.system(size: 6.8, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                 }
             }
@@ -11876,10 +14342,10 @@ struct ContentView: View {
             Toggle(isOn: $engine.inboundMIDIEchoEnabled) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("DAW / INBOUND NOTE HARDWARE ECHO")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                     Text("When ON, incoming MIDI notes from QLab or DAWs light up the hardware key LEDs.")
-                        .font(.system(size: 6.8, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                 }
             }
@@ -11889,13 +14355,13 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
 
             Text("Selected Control: \(engine.controls[engine.selectedIndex].label)")
-                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                 .foregroundColor(engine.currentTheme.accentPrimary)
                 .padding(.top, 2)
 
             HStack(spacing: 4) {
                 Text("MODE:")
-                    .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
                 Picker("", selection: Binding(
                     get: { engine.controls[engine.selectedIndex].feedbackMode },
@@ -11962,51 +14428,29 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
             }
 
-            // Top Primary Navigation Bar: [CONSOLE] [NETWORK] [SETTINGS] + Quick Settings Action
+            // Top Primary Navigation Bar: [CONSOLE] [NETWORK] [SETTINGS]
             HStack(spacing: 4) {
-                HStack(spacing: 2) {
-                    ForEach(TerminalTab.allCases) { tab in
-                        Button(action: {
-                            engine.terminalTab = tab
-                            SoundEffect.keyTap.play(with: engine.soundPack)
-                        }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: tab.icon)
-                                    .font(.system(size: 7.2 * scale, weight: .bold))
-                                Text(tab.rawValue)
-                                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2.8)
-                            .background(engine.terminalTab == tab ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
-                            .foregroundColor(engine.terminalTab == tab ? .black : Color(white: 0.8))
-                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                ForEach(TerminalTab.allCases) { tab in
+                    Button(action: {
+                        engine.terminalTab = tab
+                        SoundEffect.keyTap.play(with: engine.soundPack)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 11.0 * scale, weight: .bold))
+                            Text(tab.rawValue)
+                                .font(.system(size: 11.0 * scale, weight: .bold, design: .default))
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3.5)
+                        .background(engine.terminalTab == tab ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
+                        .foregroundColor(engine.terminalTab == tab ? .black : Color(white: 0.85))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
+                    .buttonStyle(.plain)
                 }
 
-                Spacer(minLength: 2)
-
-                // Dedicated Settings Button
-                Button(action: {
-                    engine.terminalTab = (engine.terminalTab == .settings ? .console : .settings)
-                    SoundEffect.knobTick.play(with: engine.soundPack)
-                }) {
-                    HStack(spacing: 2.5) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 7.5 * scale, weight: .bold))
-                        Text(engine.terminalTab == .settings ? "EXIT" : "SETTINGS")
-                            .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
-                    }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2.5)
-                    .background(engine.terminalTab == .settings ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.09))
-                    .foregroundColor(engine.terminalTab == .settings ? .black : Color(white: 0.9))
-                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
-                }
-                .buttonStyle(.plain)
-                .help("Configure receiving Port, IP & MIDI device for each protocol")
+                Spacer()
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2.5)
@@ -12042,88 +14486,166 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private func protocolTerminalConsoleContent(scale: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            // Sub-Toolbar: Protocol Filter Pills & Actions (Pause, Clear, Copy, Mock Inject)
-            HStack(spacing: 4) {
-                // Filter Tabs: ALL, MIDI, OSC, DMX, SYS
-                HStack(spacing: 2) {
-                    ForEach([ProtocolEvent.EventType.all, .midiIn, .oscIn, .dmx, .sys], id: \.self) { filterType in
-                        Button(action: {
-                            engine.protocolFilter = filterType
-                            SoundEffect.keyTap.play(with: engine.soundPack)
-                        }) {
-                            Text(filterType == .all ? "ALL" : (filterType == .midiIn ? "MIDI" : (filterType == .oscIn ? "OSC" : filterType.rawValue)))
-                                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2.5)
-                                .background(engine.protocolFilter == filterType ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
-                                .foregroundColor(engine.protocolFilter == filterType ? .black : Color(white: 0.8))
-                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            // Sub-Toolbar: Protocol Filter Pills & Actions (Row 1) + Telemetry & Sizing (Row 2)
+            VStack(spacing: 3.5) {
+                // ROW 1: Filter Tabs (Left) & Action Icons (Right)
+                HStack(spacing: 4) {
+                    // Filter Tabs: ALL, MIDI, OSC, DMX, SYS
+                    HStack(spacing: 2) {
+                        ForEach([ProtocolEvent.EventType.all, .midiIn, .oscIn, .dmx, .sys], id: \.self) { filterType in
+                            Button(action: {
+                                engine.protocolFilter = filterType
+                                SoundEffect.keyTap.play(with: engine.soundPack)
+                            }) {
+                                Text(filterType == .all ? "ALL" : (filterType == .midiIn ? "MIDI" : (filterType == .oscIn ? "OSC" : filterType.rawValue)))
+                                    .font(.system(size: 10.0 * scale, weight: .bold, design: .default))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2.5)
+                                    .background(engine.protocolFilter == filterType ? engine.currentTheme.accentPrimary : Color.white.opacity(0.06))
+                                    .foregroundColor(engine.protocolFilter == filterType ? .black : Color(white: 0.85))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    Spacer(minLength: 4)
+
+                    // Quick Actions (Pause, Clear, Copy, Mock Inject)
+                    HStack(spacing: 5) {
+                        // Pause / Resume Toggle
+                        Button(action: { engine.toggleProtocolLoggingPaused() }) {
+                            Image(systemName: engine.isProtocolPaused ? "play.circle.fill" : "pause.circle.fill")
+                                .font(.system(size: 12.0 * scale, weight: .bold))
+                                .foregroundColor(engine.isProtocolPaused ? Color.orange : Color(white: 0.85))
+                                .padding(2)
                         }
                         .buttonStyle(.plain)
+                        .help(engine.isProtocolPaused ? "Resume live packet stream" : "Pause live packet stream")
+
+                        // Clear
+                        Button(action: { engine.clearProtocolLogs() }) {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 11.0 * scale))
+                                .foregroundColor(Color(white: 0.75))
+                                .padding(2)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Clear Terminal Logs")
+
+                        // Copy
+                        Button(action: { engine.exportProtocolLogsToClipboard() }) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 11.0 * scale))
+                                .foregroundColor(Color(white: 0.75))
+                                .padding(2)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy logs to Clipboard")
+
+                        // Test Injection Menu
+                        Menu {
+                            Button("Inject MIDI Note On (C4)") { engine.injectTestProtocolPacket(type: .midiIn) }
+                            Button("Inject MIDI CC #1 (Mod)") { engine.injectTestProtocolPacket(type: .midiOut) }
+                            Button("Inject OSC In (/qlab/cue/1/start)") { engine.injectTestProtocolPacket(type: .oscIn) }
+                            Button("Inject OSC Out (/live/volume)") { engine.injectTestProtocolPacket(type: .oscOut) }
+                            Button("Inject Art-Net DMX Universe 0") { engine.injectTestProtocolPacket(type: .dmx) }
+                            Button("Inject MSC Go Command") { engine.injectTestProtocolPacket(type: .msc) }
+                        } label: {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 11.0 * scale))
+                                .foregroundColor(engine.currentTheme.accentPrimary)
+                                .padding(2)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .help("Inject mock protocol packet for testing")
                     }
                 }
 
-                Spacer(minLength: 4)
+                // ROW 2: Status Telemetry Pill & Terminal Text Size Scaler
+                HStack(spacing: 5) {
+                    // Status pill
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(engine.isOSCListenerActive ? Color.green : Color.yellow)
+                            .frame(width: 4.5, height: 4.5)
+                        Text("UDP :\(engine.oscIncomingPort)")
+                            .font(.system(size: 10 * scale, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(white: 0.8))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
 
-                // Status pill
-                HStack(spacing: 3) {
-                    Circle()
-                        .fill(engine.isOscListenerActive ? Color.green : Color.yellow)
-                        .frame(width: 4.5, height: 4.5)
-                    Text("UDP :\(engine.oscIncomingPort)")
-                        .font(.system(size: 6.8 * scale, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.75))
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-                .background(Color.black.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    Spacer(minLength: 4)
 
-                // Pause / Resume Toggle
-                Button(action: { engine.toggleProtocolLoggingPaused() }) {
-                    Image(systemName: engine.isProtocolPaused ? "play.circle.fill" : "pause.circle.fill")
-                        .font(.system(size: 8.5 * scale, weight: .bold))
-                        .foregroundColor(engine.isProtocolPaused ? Color.orange : Color(white: 0.85))
-                }
-                .buttonStyle(.plain)
-                .help(engine.isProtocolPaused ? "Resume live packet stream" : "Pause live packet stream")
+                    // Terminal Text Size Stepper & Preset Menu
+                    HStack(spacing: 1.5) {
+                        Button(action: {
+                            engine.decreaseTerminalFontSize()
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            Image(systemName: "textformat.size.smaller")
+                                .font(.system(size: 9.5 * scale, weight: .bold))
+                                .frame(width: 18 * scale, height: 17 * scale)
+                                .background(Color.white.opacity(0.06))
+                                .foregroundColor(engine.terminalFontSize <= 8.5 ? Color(white: 0.35) : Color(white: 0.85))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(engine.terminalFontSize <= 8.5)
+                        .help("Decrease terminal font size (⌥⌘-)")
+                        .accessibilityLabel("Decrease terminal font size")
 
-                // Clear
-                Button(action: { engine.clearProtocolLogs() }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 8 * scale))
-                        .foregroundColor(Color(white: 0.75))
-                }
-                .buttonStyle(.plain)
-                .help("Clear Terminal Logs")
+                        Menu {
+                            Section("TERMINAL TEXT SIZE") {
+                                Button("Tiny (8.5 pt)") { engine.setTerminalFontSize(8.5) }
+                                Button("Compact (10 pt)") { engine.setTerminalFontSize(10.0) }
+                                Button("Default (11.5 pt)") { engine.resetTerminalFontSize() }
+                                Button("Medium (13 pt)") { engine.setTerminalFontSize(13.0) }
+                                Button("Large (15 pt)") { engine.setTerminalFontSize(15.0) }
+                                Button("Extra Large (18 pt)") { engine.setTerminalFontSize(18.0) }
+                                Button("Huge (22 pt)") { engine.setTerminalFontSize(22.0) }
+                            }
+                            Divider()
+                            Button("Reset to Default (11.5 pt)") { engine.resetTerminalFontSize() }
+                        } label: {
+                            HStack(spacing: 1.5) {
+                                Text(String(format: "%.0fpt", engine.terminalFontSize))
+                                    .font(.system(size: 9 * scale, weight: .bold, design: .monospaced))
+                                    .foregroundColor(engine.currentTheme.accentPrimary)
+                            }
+                            .padding(.horizontal, 4)
+                            .frame(height: 17 * scale)
+                            .background(Color.white.opacity(0.08))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .help("Choose terminal text size")
+                        .accessibilityLabel("Terminal text size menu, current \(Int(round(engine.terminalFontSize))) points")
 
-                // Copy
-                Button(action: { engine.exportProtocolLogsToClipboard() }) {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 8 * scale))
-                        .foregroundColor(Color(white: 0.75))
+                        Button(action: {
+                            engine.increaseTerminalFontSize()
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            Image(systemName: "textformat.size.larger")
+                                .font(.system(size: 9.5 * scale, weight: .bold))
+                                .frame(width: 18 * scale, height: 17 * scale)
+                                .background(Color.white.opacity(0.06))
+                                .foregroundColor(engine.terminalFontSize >= 22.0 ? Color(white: 0.35) : Color(white: 0.85))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(engine.terminalFontSize >= 22.0)
+                        .help("Increase terminal font size (⌥⌘+)")
+                        .accessibilityLabel("Increase terminal text size")
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    .overlay(RoundedRectangle(cornerRadius: 3.5).stroke(Color.white.opacity(0.12), lineWidth: 0.8))
                 }
-                .buttonStyle(.plain)
-                .help("Copy logs to Clipboard")
-
-                // Test Injection Menu
-                Menu {
-                    Button("Inject MIDI Note On (C4)") { engine.injectTestProtocolPacket(type: .midiIn) }
-                    Button("Inject MIDI CC #1 (Mod)") { engine.injectTestProtocolPacket(type: .midiOut) }
-                    Button("Inject OSC In (/qlab/cue/1/start)") { engine.injectTestProtocolPacket(type: .oscIn) }
-                    Button("Inject OSC Out (/live/volume)") { engine.injectTestProtocolPacket(type: .oscOut) }
-                    Button("Inject Art-Net DMX Universe 0") { engine.injectTestProtocolPacket(type: .dmx) }
-                    Button("Inject MSC Go Command") { engine.injectTestProtocolPacket(type: .msc) }
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 7.5 * scale))
-                        .foregroundColor(engine.currentTheme.accentPrimary)
-                }
-                .menuStyle(.borderlessButton)
-                .help("Inject mock protocol packet for testing")
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2.5)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3.5)
             .background(Color.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 5))
 
@@ -12145,18 +14667,18 @@ struct ContentView: View {
                 if filteredEvents.isEmpty {
                     VStack(spacing: 5) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 15 * scale))
+                            .font(.system(size: max(14, engine.terminalFontSize * 1.3) * scale))
                             .foregroundColor(engine.currentTheme.accentPrimary.opacity(0.5))
                         Text("LISTENING FOR PROTOCOL PACKETS...")
-                            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                            .font(.system(size: engine.terminalFontSize * scale, weight: .heavy, design: .monospaced))
                             .foregroundColor(Color(white: 0.6))
                         Text("Send OSC to UDP :\(engine.oscIncomingPort) or trigger CoreMIDI")
-                            .font(.system(size: 6.8 * scale, design: .monospaced))
+                            .font(.system(size: max(8.5, (engine.terminalFontSize - 1.0)) * scale, design: .monospaced))
                             .foregroundColor(Color(white: 0.38))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView([.vertical], showsIndicators: true) {
+                    ScrollView([.vertical], showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: 2) {
                             ForEach(filteredEvents) { event in
                                 protocolEventRow(for: event, scale: scale)
@@ -12174,12 +14696,12 @@ struct ContentView: View {
             // Bottom Quick OSC Command / Packet Injector Bar
             HStack(spacing: 4) {
                 Text("❯")
-                    .font(.system(size: 8 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: (engine.terminalFontSize + 1.0) * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.accentPrimary)
 
                 TextField("/address [arg]...", text: $terminalQuickCommand)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 7.5 * scale, design: .monospaced))
+                    .font(.system(size: engine.terminalFontSize * scale, design: .monospaced))
                     .foregroundColor(.white)
                     .onSubmit {
                         sendTerminalQuickCommand()
@@ -12188,7 +14710,7 @@ struct ContentView: View {
                 Button("SEND") {
                     sendTerminalQuickCommand()
                 }
-                .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: max(9, engine.terminalFontSize - 0.5) * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
@@ -12208,7 +14730,7 @@ struct ContentView: View {
     // NETWORK TAB CONTENT (INTERFACES, ACTIVE RECEIVERS & TELEMETRY)
     // ------------------------------------------------------------------------
     private func protocolTerminalNetworkContent(scale: CGFloat) -> some View {
-        ScrollView([.vertical], showsIndicators: true) {
+        ScrollView([.vertical], showsIndicators: false) {
             VStack(alignment: .leading, spacing: 6) {
                 networkInterfacesCard(scale: scale)
                 activeReceiversCard(scale: scale)
@@ -12230,14 +14752,14 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "network")
-                    .font(.system(size: 8.5 * scale, weight: .bold))
+                    .font(.system(size: 13.5 * scale, weight: .bold))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text("HOST NETWORK INTERFACES")
-                    .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Text("TARGET IP ADDRESSES")
-                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.5))
             }
 
@@ -12247,11 +14769,11 @@ struct ContentView: View {
                         .fill(iface.isLoopback ? Color.blue : Color.green)
                         .frame(width: 5 * scale, height: 5 * scale)
                     Text(iface.name)
-                        .font(.system(size: 7 * scale, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .medium, design: .monospaced))
                         .foregroundColor(Color(white: 0.8))
                     Spacer()
                     Text(iface.ip)
-                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                     Button(action: {
                         NSPasteboard.general.clearContents()
@@ -12260,7 +14782,7 @@ struct ContentView: View {
                         engine.log("📋 Copied \(iface.ip) to clipboard")
                     }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 6.5 * scale))
+                            .font(.system(size: 11.5 * scale))
                             .foregroundColor(Color(white: 0.7))
                     }
                     .buttonStyle(.plain)
@@ -12282,18 +14804,18 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 8.5 * scale, weight: .bold))
+                    .font(.system(size: 13.5 * scale, weight: .bold))
                     .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
                 Text("ACTIVE PROTOCOL RECEIVERS")
-                    .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
             }
 
             networkProtocolStatusRow(
                 title: "OSC UDP RECEIVER",
-                badge: engine.isOscListenerActive ? "ONLINE" : "READY",
-                badgeColor: engine.isOscListenerActive ? .green : .yellow,
+                badge: engine.isOSCListenerActive ? "ONLINE" : "READY",
+                badgeColor: engine.isOSCListenerActive ? .green : .yellow,
                 details: "IP: \(engine.oscIncomingHost) | Port: \(engine.oscIncomingPort)",
                 packets: "\(engine.oscPacketsCount) pkts",
                 scale: scale
@@ -12303,7 +14825,7 @@ struct ContentView: View {
                 title: "CORE MIDI RECEIVER",
                 badge: engine.isConnected ? "HARDWARE ONLINE" : "LISTENING",
                 badgeColor: engine.isConnected ? .green : Color(red: 0.2, green: 0.8, blue: 1.0),
-                details: "Dev: \(engine.selectedMidiInputDevice) | \(engine.selectedMidiInputChannel == 0 ? "Omni (All Ch)" : "Ch \(engine.selectedMidiInputChannel)")",
+                details: "Dev: \(engine.selectedMIDIInputDevice) | \(engine.selectedMIDIInputChannel == 0 ? "Omni (All Ch)" : "Ch \(engine.selectedMIDIInputChannel)")",
                 packets: "\(engine.midiPacketsCount) msgs",
                 scale: scale
             )
@@ -12359,9 +14881,9 @@ struct ContentView: View {
             }) {
                 HStack(spacing: 3) {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 7.5 * scale, weight: .bold))
+                        .font(.system(size: 12.5 * scale, weight: .bold))
                     Text("CONFIGURE RECEIVING PORTS & DEVICES")
-                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 }
                 .foregroundColor(.black)
                 .frame(maxWidth: .infinity)
@@ -12377,9 +14899,9 @@ struct ContentView: View {
             }) {
                 HStack(spacing: 3) {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 7.5 * scale, weight: .bold))
+                        .font(.system(size: 12.5 * scale, weight: .bold))
                     Text("RE-SCAN")
-                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 8)
@@ -12395,11 +14917,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title)
-                    .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Text(badge)
-                    .font(.system(size: 6.2 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.0 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.black)
                     .padding(.horizontal, 3.5)
                     .padding(.vertical, 1)
@@ -12408,11 +14930,11 @@ struct ContentView: View {
             }
             HStack {
                 Text(details)
-                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, design: .monospaced))
                     .foregroundColor(Color(white: 0.7))
                 Spacer()
                 Text(packets)
-                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                     .foregroundColor(badgeColor)
             }
         }
@@ -12424,11 +14946,13 @@ struct ContentView: View {
     private func telemetryCounterPill(title: String, value: String, color: Color, scale: CGFloat) -> some View {
         VStack(spacing: 1.5) {
             Text(title)
-                .font(.system(size: 5.8 * scale, weight: .bold, design: .monospaced))
+                .font(.system(size: 10.5 * scale, weight: .bold, design: .monospaced))
                 .foregroundColor(Color(white: 0.55))
             Text(value)
-                .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 13.5 * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 3)
@@ -12441,9 +14965,12 @@ struct ContentView: View {
     // SETTINGS TAB CONTENT (DECOMPOSED CARDS FOR MAXIMUM COMPILER EFFICIENCY)
     // ------------------------------------------------------------------------
     private func protocolTerminalSettingsContent(scale: CGFloat) -> some View {
-        ScrollView([.vertical], showsIndicators: true) {
+        ScrollView([.vertical], showsIndicators: false) {
             VStack(alignment: .leading, spacing: 8) {
                 settingsTopHeader(scale: scale)
+                performanceAndRefreshSettingsCard(scale: scale)
+                undoMemorySettingsCard(scale: scale)
+                terminalDisplaySettingsCard(scale: scale)
                 oscSettingsCard(scale: scale)
                 midiSettingsCard(scale: scale)
                 artNetSettingsCard(scale: scale)
@@ -12460,13 +14987,317 @@ struct ContentView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
     }
 
+    private func performanceAndRefreshSettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11 * scale, weight: .bold))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                Text("PROMOTION 120 FPS & GRAPHICS PERFORMANCE")
+                    .font(.system(size: 11 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.headerText)
+                Spacer()
+                Text("\(engine.targetFPS) FPS")
+                    .font(.system(size: 10 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.targetFPS == 120 ? Color(red: 0.2, green: 0.95, blue: 0.5) : Color.cyan)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Capsule())
+            }
+
+            Text("Ultra-smooth high refresh rate ProMotion rendering for reactive key shockwaves and procedural lighting, with intelligent USB MIDI rate-limiting to preserve hardware throughput.")
+                .font(.system(size: 9.5 * scale, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(white: 0.70))
+
+            HStack(spacing: 8) {
+                Button(action: {
+                    engine.setTargetFPS(120)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: engine.targetFPS == 120 ? "checkmark.circle.fill" : "circle")
+                        Text("120 FPS // ProMotion Ultra")
+                    }
+                    .font(.system(size: 10.5 * scale, weight: .bold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(engine.targetFPS == 120 ? Color(red: 0.12, green: 0.35, blue: 0.20) : Color.white.opacity(0.08))
+                    .foregroundColor(engine.targetFPS == 120 ? Color(red: 0.3, green: 0.98, blue: 0.6) : .white)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    engine.setTargetFPS(60)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: engine.targetFPS == 60 ? "checkmark.circle.fill" : "circle")
+                        Text("60 FPS // Standard (Power Saver)")
+                    }
+                    .font(.system(size: 10.5 * scale, weight: .bold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(engine.targetFPS == 60 ? Color.cyan.opacity(0.25) : Color.white.opacity(0.08))
+                    .foregroundColor(engine.targetFPS == 60 ? Color.cyan : .white)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 5, height: 5)
+                    Text("LIVE FPS: \(String(format: "%.1f", engine.measuredFPS))")
+                        .font(.system(size: 9 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.green)
+                }
+                HStack(spacing: 4) {
+                    Text("FRAME LATENCY: \(String(format: "%.2f", engine.frameLatencyMs)) ms")
+                        .font(.system(size: 9 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.65))
+                }
+                HStack(spacing: 4) {
+                    Text("HARDWARE BUS: 60Hz THROTTLED")
+                        .font(.system(size: 9 * scale, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(white: 0.65))
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private func undoMemorySettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 11 * scale, weight: .bold))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                Text("UNDO STEPS MEMORY & RECOVERY")
+                    .font(.system(size: 11 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.headerText)
+                Spacer()
+                Text("\(engine.undoStepsCount) / \(engine.maxUndoSteps) STEPS")
+                    .font(.system(size: 10 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Capsule())
+            }
+
+            Text("Deep snapshot buffer allows rolling back any control customization, LED velocity, macro, or FX frame changes.")
+                .font(.system(size: 9.5 * scale, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(white: 0.70))
+
+            HStack(spacing: 8) {
+                Text("BUFFER LIMIT:")
+                    .font(.system(size: 10 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.75))
+
+                Slider(value: Binding(
+                    get: { Double(engine.maxUndoSteps) },
+                    set: {
+                        engine.maxUndoSteps = Int($0)
+                        UserDefaults.standard.set(engine.maxUndoSteps, forKey: "BitchBoy_MaxUndoSteps_v1")
+                    }
+                ), in: 10...200, step: 10)
+                .tint(engine.currentTheme.accentPrimary)
+
+                Text("\(engine.maxUndoSteps)")
+                    .font(.system(size: 11 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                    .frame(width: 35, alignment: .trailing)
+            }
+
+            HStack(spacing: 8) {
+                Button(action: {
+                    engine.undo()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                        Text("UNDO (⌘Z)")
+                    }
+                    .font(.system(size: 10 * scale, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(engine.canUndo ? 0.12 : 0.04))
+                    .foregroundColor(engine.canUndo ? .white : Color.white.opacity(0.25))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .disabled(!engine.canUndo)
+
+                Button(action: {
+                    engine.redo()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.forward")
+                        Text("REDO (⇧⌘Z)")
+                    }
+                    .font(.system(size: 10 * scale, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(engine.canRedo ? 0.12 : 0.04))
+                    .foregroundColor(engine.canRedo ? .white : Color.white.opacity(0.25))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .disabled(!engine.canRedo)
+
+                Spacer()
+
+                Button(action: {
+                    engine.clearUndoHistory()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash.fill")
+                        Text("CLEAR HISTORY")
+                    }
+                    .font(.system(size: 9.5 * scale, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.20))
+                    .foregroundColor(Color(red: 1, green: 0.55, blue: 0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .disabled(!engine.canUndo && !engine.canRedo)
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private func terminalDisplaySettingsCard(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "textformat.size")
+                    .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
+                Text("TERMINAL TEXT & DISPLAY SETTINGS")
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(String(format: "%.1f pt", engine.terminalFontSize))
+                    .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
+                    .foregroundColor(engine.currentTheme.accentPrimary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+            }
+
+            Text("Adjust font size of incoming protocol packets (MIDI, OSC, DMX, SYS) and outgoing prompt commands:")
+                .font(.system(size: 10.5 * scale, design: .monospaced))
+                .foregroundColor(Color(white: 0.65))
+
+            HStack(spacing: 8) {
+                Text("A").font(.system(size: 9.5 * scale, weight: .bold)).foregroundColor(Color(white: 0.6))
+                Slider(value: Binding(
+                    get: { engine.terminalFontSize },
+                    set: { engine.setTerminalFontSize($0) }
+                ), in: 8.5...22.0, step: 0.5)
+                .tint(engine.currentTheme.accentPrimary)
+                Text("A").font(.system(size: 16.0 * scale, weight: .bold)).foregroundColor(.white)
+
+                Button("DEFAULT") {
+                    engine.resetTerminalFontSize()
+                    SoundEffect.knobTick.play(with: engine.soundPack)
+                }
+                .font(.system(size: 10.0 * scale, weight: .heavy, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(engine.currentTheme.accentPrimary)
+                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                .buttonStyle(.plain)
+            }
+
+            // Quick preset pills
+            HStack(spacing: 3) {
+                Text("PRESETS:")
+                    .font(.system(size: 10.0 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.5))
+                ForEach([(8.5, "Tiny 8.5pt"), (10.0, "Compact 10pt"), (11.5, "Default 11.5pt"), (13.5, "Medium 13.5pt"), (16.0, "Large 16pt"), (18.0, "X-Large 18pt")], id: \.0) { sizeVal, label in
+                    Button(action: {
+                        engine.setTerminalFontSize(CGFloat(sizeVal))
+                        SoundEffect.keyTap.play(with: engine.soundPack)
+                    }) {
+                        Text(label)
+                            .font(.system(size: 9.5 * scale, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(abs(engine.terminalFontSize - CGFloat(sizeVal)) < 0.25 ? engine.currentTheme.accentPrimary.opacity(0.3) : Color.white.opacity(0.06))
+                            .foregroundColor(abs(engine.terminalFontSize - CGFloat(sizeVal)) < 0.25 ? engine.currentTheme.accentPrimary : Color(white: 0.75))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // Live Preview Box
+            VStack(alignment: .leading, spacing: 3) {
+                Text("LIVE TERMINAL PREVIEW:")
+                    .font(.system(size: 9.5 * scale, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.5))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("13:40:12.000")
+                            .font(.system(size: max(8, engine.terminalFontSize - 0.5) * scale, design: .monospaced))
+                            .foregroundColor(Color(white: 0.45))
+                            .frame(width: max(58 * scale, engine.terminalFontSize * scale * 6.5), alignment: .leading)
+                        Text("MIDI OUT")
+                            .font(.system(size: max(8, engine.terminalFontSize - 0.5) * scale, weight: .heavy, design: .monospaced))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 1)
+                            .background(Color(red: 0.2, green: 0.95, blue: 0.85))
+                            .clipShape(RoundedRectangle(cornerRadius: 2.5))
+                            .frame(width: max(48 * scale, engine.terminalFontSize * scale * 5.0), alignment: .leading)
+                        Text("CC #5 Value: 127")
+                            .font(.system(size: engine.terminalFontSize * scale, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(red: 0.2, green: 0.95, blue: 0.85))
+                        Spacer()
+                        Text("B0 05 7F")
+                            .font(.system(size: max(7.5, engine.terminalFontSize - 1.0) * scale, design: .monospaced))
+                            .foregroundColor(Color(white: 0.38))
+                    }
+                    HStack(spacing: 4) {
+                        Text("❯")
+                            .font(.system(size: (engine.terminalFontSize + 1.0) * scale, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                        Text("/qlab/cue/1/start")
+                            .font(.system(size: engine.terminalFontSize * scale, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                }
+                .padding(5)
+                .background(Color.black.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.1), lineWidth: 0.8))
+            }
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.98, green: 0.78, blue: 0.25).opacity(0.3), lineWidth: 0.8))
+    }
+
     private func settingsTopHeader(scale: CGFloat) -> some View {
         HStack {
             Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 8.5 * scale, weight: .bold))
+                .font(.system(size: 13.5 * scale, weight: .bold))
                 .foregroundColor(Color(red: 0.96, green: 0.76, blue: 0.18))
             Text("PROTOCOL RECEIVING CONFIGURATION")
-                .font(.system(size: 7.8 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(.white)
             Spacer()
             Button(action: {
@@ -12474,7 +15305,7 @@ struct ContentView: View {
                 SoundEffect.keyTap.play(with: engine.soundPack)
             }) {
                 Text("DONE")
-                    .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.black)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -12492,38 +15323,38 @@ struct ContentView: View {
                 Image(systemName: "wave.3.forward.circle.fill")
                     .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.2))
                 Text("1. OSC (OPEN SOUND CONTROL) RECEIVER")
-                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Circle()
-                    .fill(engine.isOscListenerActive ? Color.green : Color.yellow)
+                    .fill(engine.isOSCListenerActive ? Color.green : Color.yellow)
                     .frame(width: 5, height: 5)
             }
 
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING PORT:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("8000", value: Binding(get: { Int(engine.oscIncomingPort) }, set: { engine.oscIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                         .frame(width: 75 * scale)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING IP / BIND HOST:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("0.0.0.0 (All Interfaces)", text: $engine.oscIncomingHost)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                 }
             }
 
             HStack(spacing: 3) {
                 Text("PRESETS:")
-                    .font(.system(size: 6.2 * scale, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.0 * scale, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.5))
                 ForEach([(8000, "8000 (Default)"), (53000, "53000 (QLab)"), (9000, "9000 (Resolume)"), (7000, "7000 (TouchOSC)")], id: \.0) { portVal, label in
                     Button(action: {
@@ -12532,7 +15363,7 @@ struct ContentView: View {
                         SoundEffect.keyTap.play(with: engine.soundPack)
                     }) {
                         Text(label)
-                            .font(.system(size: 6.2 * scale, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.0 * scale, weight: .bold, design: .monospaced))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(engine.oscIncomingPort == UInt16(portVal) ? Color(red: 1.0, green: 0.65, blue: 0.2).opacity(0.3) : Color.white.opacity(0.06))
@@ -12550,7 +15381,7 @@ struct ContentView: View {
                     Image(systemName: "arrow.clockwise")
                     Text("APPLY & RESTART OSC LISTENER")
                 }
-                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -12571,7 +15402,7 @@ struct ContentView: View {
                 Image(systemName: "pianokeys.fill")
                     .foregroundColor(Color(red: 0.2, green: 0.95, blue: 0.5))
                 Text("2. CORE MIDI RECEIVING DEVICE & CHANNEL")
-                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Circle()
@@ -12581,9 +15412,9 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("RECEIVING MIDI INPUT DEVICE:")
-                    .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.6))
-                Picker("", selection: $engine.selectedMidiInputDevice) {
+                Picker("", selection: $engine.selectedMIDIInputDevice) {
                     Text("OMNI // ALL CONNECTED MIDI DEVICES").tag("ALL")
                     Text("AUTO-DETECT (BITCHBOY HARDWARE ONLY)").tag("AUTO")
                     ForEach(engine.availableInputSources, id: \.self) { srcName in
@@ -12591,17 +15422,17 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .onChange(of: engine.selectedMidiInputDevice) { newDev in
-                    engine.updateMIDIReceiver(device: newDev, channel: engine.selectedMidiInputChannel)
+                .onChange(of: engine.selectedMIDIInputDevice) { _, newDev in
+                    engine.updateMIDIReceiver(device: newDev, channel: engine.selectedMIDIInputChannel)
                 }
             }
 
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING CHANNEL:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
-                    Picker("", selection: $engine.selectedMidiInputChannel) {
+                    Picker("", selection: $engine.selectedMIDIInputChannel) {
                         Text("OMNI (ALL CHANNELS)").tag(0)
                         ForEach(1...16, id: \.self) { ch in
                             Text("CHANNEL \(ch)").tag(ch)
@@ -12609,8 +15440,8 @@ struct ContentView: View {
                     }
                     .pickerStyle(.menu)
                     .frame(width: 140 * scale)
-                    .onChange(of: engine.selectedMidiInputChannel) { newCh in
-                        engine.updateMIDIReceiver(device: engine.selectedMidiInputDevice, channel: newCh)
+                    .onChange(of: engine.selectedMIDIInputChannel) { _, newCh in
+                        engine.updateMIDIReceiver(device: engine.selectedMIDIInputDevice, channel: newCh)
                     }
                 }
 
@@ -12625,7 +15456,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.triangle.2.circlepath")
                         Text("RE-SCAN MIDI")
                     }
-                    .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.black)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
@@ -12647,13 +15478,13 @@ struct ContentView: View {
                 Image(systemName: "lightbulb.fill")
                     .foregroundColor(Color(red: 0.95, green: 0.85, blue: 0.25))
                 Text("3. ART-NET 4 DMX RECEIVER")
-                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Toggle("", isOn: $engine.isArtNetListenerActive)
                     .toggleStyle(.switch)
                     .scaleEffect(0.65)
-                    .onChange(of: engine.isArtNetListenerActive) { active in
+                    .onChange(of: engine.isArtNetListenerActive) { _, active in
                         if active {
                             engine.startArtNetListener(port: engine.artNetIncomingPort)
                         } else {
@@ -12665,30 +15496,30 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING UDP PORT:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("6454", value: Binding(get: { Int(engine.artNetIncomingPort) }, set: { engine.artNetIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                         .frame(width: 75 * scale)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING IP / BIND:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("0.0.0.0", text: $engine.artNetIncomingHost)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("UNIVERSE:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("0", value: Binding(get: { Int(engine.artNetIncomingUniverse) }, set: { engine.artNetIncomingUniverse = UInt16(clamping: $0) }), formatter: NumberFormatter())
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                         .frame(width: 50 * scale)
                 }
             }
@@ -12700,7 +15531,7 @@ struct ContentView: View {
                     Image(systemName: "arrow.clockwise")
                     Text("APPLY & RESTART ART-NET LISTENER")
                 }
-                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -12721,13 +15552,13 @@ struct ContentView: View {
                 Image(systemName: "sparkles")
                     .foregroundColor(Color(red: 0.3, green: 0.85, blue: 1.0))
                 Text("4. sACN (ANSI E1.31) RECEIVER")
-                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
                 Toggle("", isOn: $engine.issACNListenerActive)
                     .toggleStyle(.switch)
                     .scaleEffect(0.65)
-                    .onChange(of: engine.issACNListenerActive) { active in
+                    .onChange(of: engine.issACNListenerActive) { _, active in
                         if active {
                             engine.startsACNListener(port: engine.sacnIncomingPort)
                         } else {
@@ -12739,30 +15570,30 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING UDP PORT:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("5568", value: Binding(get: { Int(engine.sacnIncomingPort) }, set: { engine.sacnIncomingPort = UInt16(clamping: $0) }), formatter: NumberFormatter())
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                         .frame(width: 75 * scale)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MULTICAST / UNICAST IP:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("0.0.0.0 (All Multicast)", text: $engine.sacnIncomingHost)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("UNIVERSE:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     TextField("1", value: Binding(get: { Int(engine.sacnIncomingUniverse) }, set: { engine.sacnIncomingUniverse = UInt16(clamping: $0) }), formatter: NumberFormatter())
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 7.5 * scale, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, design: .monospaced))
                         .frame(width: 50 * scale)
                 }
             }
@@ -12774,7 +15605,7 @@ struct ContentView: View {
                     Image(systemName: "arrow.clockwise")
                     Text("APPLY & RESTART sACN LISTENER")
                 }
-                .font(.system(size: 6.8 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -12795,7 +15626,7 @@ struct ContentView: View {
                 Image(systemName: "theatermasks.fill")
                     .foregroundColor(Color(red: 0.85, green: 0.45, blue: 1.0))
                 Text("5. MSC (MIDI SHOW CONTROL) RECEIVER")
-                    .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 Spacer()
             }
@@ -12803,7 +15634,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECEIVING DEVICE ID (0..127):")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     Picker("", selection: $engine.mscDeviceID) {
                         Text("1 (Default)").tag(UInt8(1))
@@ -12820,7 +15651,7 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("COMMAND FORMAT:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.6))
                     Picker("", selection: $engine.mscCommandFormat) {
                         ForEach(MSCCommandFormat.allCases) { fmt in
@@ -12834,7 +15665,7 @@ struct ContentView: View {
 
             Toggle(isOn: $engine.mscAutoTriggerOnInbound) {
                 Text("Auto-Trigger Cues on Incoming MSC Commands")
-                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, design: .monospaced))
                     .foregroundColor(Color(white: 0.8))
             }
         }
@@ -12855,7 +15686,7 @@ struct ContentView: View {
                 Image(systemName: "checkmark.circle.fill")
                 Text("SAVE & APPLY ALL PROTOCOL SETTINGS")
             }
-            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+            .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
             .foregroundColor(.black)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
@@ -12866,39 +15697,46 @@ struct ContentView: View {
     }
 
 
-        private func protocolEventRow(for event: ProtocolEvent, scale: CGFloat) -> some View {
+    private static let protocolTimestampFormatter: DateFormatter = {
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss.SSS"
-        let timeStr = df.string(from: event.timestamp)
+        return df
+    }()
 
-        return HStack(alignment: .top, spacing: 4) {
+    private func protocolEventRow(for event: ProtocolEvent, scale: CGFloat) -> some View {
+        let timeStr = Self.protocolTimestampFormatter.string(from: event.timestamp)
+        let baseFontSize = engine.terminalFontSize * scale
+        let timestampWidth = max(58 * scale, baseFontSize * 6.5)
+        let badgeWidth = max(48 * scale, baseFontSize * 5.0)
+
+        return HStack(alignment: .center, spacing: 4) {
             // Timestamp
             Text(timeStr)
-                .font(.system(size: 6.8 * scale, weight: .regular, design: .monospaced))
+                .font(.system(size: max(8, baseFontSize - 0.5), weight: .regular, design: .monospaced))
                 .foregroundColor(Color(white: 0.45))
                 .lineLimit(1)
-                .frame(width: 58 * scale, alignment: .leading)
+                .frame(width: timestampWidth, alignment: .leading)
 
             // Protocol Type Badge
             Text(event.type.rawValue)
-                .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: max(8, baseFontSize - 0.5), weight: .heavy, design: .monospaced))
                 .foregroundColor(.black)
                 .padding(.horizontal, 3.5)
                 .padding(.vertical, 1)
                 .background(event.type.tagColor)
                 .clipShape(RoundedRectangle(cornerRadius: 2.5))
-                .frame(width: 48 * scale, alignment: .leading)
+                .frame(width: badgeWidth, alignment: .leading)
 
             // Command / Address
             Text(event.command)
-                .font(.system(size: 7.2 * scale, weight: .bold, design: .monospaced))
+                .font(.system(size: baseFontSize, weight: .bold, design: .monospaced))
                 .foregroundColor(event.type.tagColor)
                 .lineLimit(1)
 
             // Details / Args
             if !event.details.isEmpty {
                 Text(event.details)
-                    .font(.system(size: 6.8 * scale, design: .monospaced))
+                    .font(.system(size: max(8, baseFontSize - 0.5), design: .monospaced))
                     .foregroundColor(Color(white: 0.72))
                     .lineLimit(1)
             }
@@ -12908,12 +15746,12 @@ struct ContentView: View {
             // Raw Hex preview
             if !event.rawHex.isEmpty {
                 Text(event.rawHex)
-                    .font(.system(size: 6.2 * scale, weight: .medium, design: .monospaced))
+                    .font(.system(size: max(7.5, baseFontSize - 1.0), weight: .medium, design: .monospaced))
                     .foregroundColor(Color(white: 0.38))
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 1.5)
+        .padding(.vertical, max(1.5, (baseFontSize - 10) * 0.25))
         .padding(.horizontal, 3)
         .background(Color.white.opacity(0.02))
         .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -12924,7 +15762,6 @@ struct ContentView: View {
         guard !trimmed.isEmpty else { return }
         if trimmed.starts(with: "/") {
             engine.sendOSC(host: engine.customOSCHost, port: engine.customOSCPort, address: trimmed)
-            engine.recordProtocolEvent(type: .oscOut, command: trimmed, details: "Sent via Terminal prompt", rawHex: "", channel: "\(engine.customOSCHost):\(engine.customOSCPort)")
         } else if trimmed.lowercased().starts(with: "note") {
             let parts = trimmed.split(separator: " ")
             let noteNum = parts.count > 1 ? (UInt8(parts[1]) ?? 60) : 60
@@ -12980,7 +15817,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("SELECT ALL 32")
-                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
                         .background(Color.white.opacity(0.12))
@@ -12994,7 +15831,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("DESELECT")
-                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
                         .background(Color.white.opacity(0.12))
@@ -13007,7 +15844,7 @@ struct ContentView: View {
 
                 // Quick Color Swatches
                 HStack(spacing: 3) {
-                    ForEach([0, 3, 33, 41, 67, 72, 87, 95], id: \.self) { vel in
+                    ForEach([0, 3, 33, 41, 67, 72, 87, 57], id: \.self) { vel in
                         Circle()
                             .fill(ledColor(UInt8(vel)))
                             .frame(width: 10 * scale, height: 10 * scale)
@@ -13046,6 +15883,7 @@ struct ContentView: View {
                                     }
                                 )
                                 .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                             }
                         }
                     }
@@ -13109,6 +15947,7 @@ struct ContentView: View {
                             }
                         )
                         .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                     }
                 }
                 .padding(6)
@@ -13163,7 +16002,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("ZERO ALL (0)")
-                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
                         .background(Color.white.opacity(0.12))
@@ -13177,7 +16016,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("CENTER (64)")
-                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
                         .background(Color.white.opacity(0.12))
@@ -13191,7 +16030,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("FULL (127)")
-                        .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
                         .background(Color.white.opacity(0.12))
@@ -13214,7 +16053,7 @@ struct ContentView: View {
                         Image(systemName: "slider.vertical.3")
                         Text(engine.vuMeterLEDsEnabled ? "VU: ON" : "VU: OFF")
                     }
-                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.0 * scale, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2.5)
                     .background(Color.black.opacity(0.5))
@@ -13235,6 +16074,7 @@ struct ContentView: View {
                             onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                         )
                         .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                     }
                 }
                 .padding(6)
@@ -13284,7 +16124,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
                 .background(Color.white.opacity(0.12))
@@ -13296,7 +16136,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
                 .background(Color.white.opacity(0.12))
@@ -13316,11 +16156,17 @@ struct ContentView: View {
                         onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                     )
                     .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(Color.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
         }
         .padding(6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -13363,7 +16209,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
                 .background(Color.white.opacity(0.12))
@@ -13375,7 +16221,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
                 .background(Color.white.opacity(0.12))
@@ -13399,6 +16245,7 @@ struct ContentView: View {
                                     onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                                 )
                                 .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                             }
                         }
                     }
@@ -13448,7 +16295,7 @@ struct ContentView: View {
             ZStack(alignment: .top) {
                 if engine.mascotSpeechVisible {
                     Text(engine.mascotSpeech)
-                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.black.opacity(0.85))
@@ -13485,6 +16332,7 @@ struct ContentView: View {
                                 }
                             )
                             .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                         }
                     }
                 }
@@ -13532,13 +16380,440 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
             }
 
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 centerInspectorHUD
                     .padding(4)
             }
         }
         .padding(6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // ------------------------------------------------------------------------
+    // HARDWARE MIDI SEND & MUTE ISOLATION ENGINE
+    // ------------------------------------------------------------------------
+    private func hardwareMIDIFilterStudioPanel(isSpotlight: Bool = false) -> some View {
+        let scale: CGFloat = currentScale(for: .hardwareMIDIFilter, isSpotlight: isSpotlight)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            if !isSpotlight && standaloneModule == nil {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "switch.2")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(engine.hardwareMIDISendEnabled ? engine.currentTheme.accentPrimary : Color(red: 0.98, green: 0.38, blue: 0.38))
+                        Text("HARDWARE MIDI & MUTE // I/O")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Circle()
+                            .fill(engine.hardwareMIDISendEnabled ? Color(red: 0.22, green: 0.96, blue: 0.65) : Color(red: 0.98, green: 0.38, blue: 0.38))
+                            .frame(width: 5, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        engine.toggleSpotlightModule(.hardwareMIDIFilter)
+                    }
+
+                    Spacer(minLength: 2)
+
+                    moduleHeaderControls(for: .hardwareMIDIFilter)
+                }
+                .padding(.vertical, 2.5)
+                .padding(.horizontal, 4)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+
+            ScrollView([.vertical], showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // MASTER HARDWARE MIDI TOGGLE BANNER
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: engine.hardwareMIDISendEnabled ? "cable.connector" : "cable.connector.slash")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(engine.hardwareMIDISendEnabled ? Color(red: 0.22, green: 0.96, blue: 0.65) : Color(red: 0.98, green: 0.38, blue: 0.38))
+                                    Text("MASTER MIDI OUTPUT")
+                                        .font(.system(size: 12 * scale, weight: .bold, design: .default))
+                                        .foregroundColor(.white)
+                                }
+                                Text(engine.hardwareMIDISendEnabled ? "Hardware sends MIDI to DAW & OS" : "MUTED: Keys trigger Hotkeys ONLY with zero MIDI conflicts")
+                                    .font(.system(size: 10 * scale, weight: .regular, design: .default))
+                                    .foregroundColor(Color(white: 0.70))
+                            }
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { engine.hardwareMIDISendEnabled },
+                                set: { val in
+                                    engine.hardwareMIDISendEnabled = val
+                                    if val {
+                                        engine.hardwareInputActionsEnabled = true
+                                    }
+                                    UserDefaults.standard.set(val, forKey: "bb_hw_midi_send_enabled")
+                                    SoundEffect.knobTick.play(with: engine.soundPack)
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
+                    }
+                    .padding(8)
+                    .background(
+                        engine.hardwareMIDISendEnabled
+                            ? Color(red: 0.08, green: 0.22, blue: 0.16).opacity(0.85)
+                            : Color(red: 0.28, green: 0.08, blue: 0.10).opacity(0.85)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(
+                                engine.hardwareMIDISendEnabled
+                                    ? Color(red: 0.22, green: 0.96, blue: 0.65).opacity(0.5)
+                                    : Color(red: 0.98, green: 0.38, blue: 0.38).opacity(0.5),
+                                lineWidth: 1.2
+                            )
+                    )
+
+                    // QUICK SCENARIO PROFILES
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("QUICK WORKFLOW PROFILES")
+                            .font(.system(size: 10.5 * scale, weight: .bold, design: .default))
+                            .foregroundColor(engine.currentTheme.headerText.opacity(0.85))
+
+                        Button(action: { engine.unmuteAllInputs() }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "speaker.wave.3.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("UNMUTE ALL INPUTS // RESTORE")
+                                    .font(.system(size: 10 * scale, weight: .heavy, design: .monospaced))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(Color(red: 0.12, green: 0.35, blue: 0.22))
+                            .foregroundColor(Color(red: 0.40, green: 1.0, blue: 0.70))
+                            .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4.5)
+                                    .stroke(Color(red: 0.40, green: 1.0, blue: 0.70).opacity(0.6), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Instantly restores and unmutes all physical & software inputs, sliders, knobs, and routing")
+
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                            Button(action: { engine.applyProfileHotkeysOnly() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "keyboard.fill")
+                                        .font(.system(size: 9.5))
+                                    Text("HOTKEYS ONLY")
+                                        .font(.system(size: 10 * scale, weight: .semibold, design: .default))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 5)
+                                .background(Color.white.opacity(0.08))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Mutes all MIDI out so BitchBoy only triggers hotkeys & keybinds")
+
+                            Button(action: { engine.applyProfileDAWMIDIOnly() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "pianokeys")
+                                        .font(.system(size: 9.5))
+                                    Text("DAW MIDI ONLY")
+                                        .font(.system(size: 10 * scale, weight: .semibold, design: .default))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 5)
+                                .background(Color.white.opacity(0.08))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Enables all MIDI and turns off OS keybinds for DAW work")
+
+                            Button(action: { engine.applyProfileHybrid() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "slider.horizontal.2.square")
+                                        .font(.system(size: 9.5))
+                                    Text("HYBRID STUDIO")
+                                        .font(.system(size: 10 * scale, weight: .semibold, design: .default))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 5)
+                                .background(Color.white.opacity(0.08))
+                                .foregroundColor(Color(red: 0.22, green: 0.96, blue: 0.76))
+                                .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Default: MIDI enabled with section routing and keybinds")
+
+                            Button(action: { engine.applyProfilePanicMute() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "speaker.slash.fill")
+                                        .font(.system(size: 9.5))
+                                    Text("PANIC MUTE ALL")
+                                        .font(.system(size: 10 * scale, weight: .semibold, design: .default))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 5)
+                                .background(Color.red.opacity(0.20))
+                                .foregroundColor(Color(red: 0.98, green: 0.45, blue: 0.45))
+                                .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Mutes all outgoing MIDI and hotkeys immediately")
+                        }
+                    }
+
+                    // SECTION ISOLATION SWITCHES
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PER-SECTION MIDI ROUTING SWITCHES")
+                            .font(.system(size: 10.5 * scale, weight: .bold, design: .default))
+                            .foregroundColor(engine.currentTheme.headerText.opacity(0.85))
+
+                        VStack(spacing: 3) {
+                            sectionToggleRow(
+                                title: "4x8 MAIN KEY GRID",
+                                subtitle: "Notes 1-32",
+                                icon: "square.grid.3x3.fill",
+                                isOn: Binding(
+                                    get: { engine.keyGridMIDISendEnabled },
+                                    set: { val in
+                                        engine.keyGridMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_keygrid_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "VERTICAL FADERS (8-CH)",
+                                subtitle: "CC 0-7",
+                                icon: "slider.vertical.3",
+                                isOn: Binding(
+                                    get: { engine.verticalFadersMIDISendEnabled },
+                                    set: { val in
+                                        engine.verticalFadersMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_vfaders_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "HORIZONTAL CROSSFADERS (4-CH)",
+                                subtitle: "CC 8-11",
+                                icon: "slider.horizontal.below.rectangle",
+                                isOn: Binding(
+                                    get: { engine.horizontalFadersMIDISendEnabled },
+                                    set: { val in
+                                        engine.horizontalFadersMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_hfaders_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "ROTARY KNOBS (8 ENCODERS)",
+                                subtitle: "CC 20-27",
+                                icon: "dial.low.fill",
+                                isOn: Binding(
+                                    get: { engine.rotaryKnobsMIDISendEnabled },
+                                    set: { val in
+                                        engine.rotaryKnobsMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_knobs_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "MACRO KEY STRIP",
+                                subtitle: "Notes 33-40",
+                                icon: "rectangle.split.3x1.fill",
+                                isOn: Binding(
+                                    get: { engine.keyStripMIDISendEnabled },
+                                    set: { val in
+                                        engine.keyStripMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_keystrip_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "3x3 KEYPAD DECK",
+                                subtitle: "Notes 41-49",
+                                icon: "circle.grid.3x3.fill",
+                                isOn: Binding(
+                                    get: { engine.keypadMIDISendEnabled },
+                                    set: { val in
+                                        engine.keypadMIDISendEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_keypad_midi_send")
+                                    }
+                                ),
+                                scale: scale
+                            )
+                        }
+                        .padding(5)
+                        .background(Color.black.opacity(0.40))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    // PROTOCOL & ENGINE BROADCAST SWITCHES
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PROTOCOL & ENGINE BROADCAST")
+                            .font(.system(size: 10 * scale, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText.opacity(0.85))
+
+                        VStack(spacing: 3) {
+                            sectionToggleRow(
+                                title: "HARDWARE INPUT INGESTION",
+                                subtitle: "Accepts & processes incoming MIDI messages",
+                                icon: "arrow.down.right.and.arrow.up.left",
+                                isOn: Binding(
+                                    get: { engine.hardwareInputActionsEnabled },
+                                    set: { val in
+                                        engine.hardwareInputActionsEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_hw_input_actions_enabled")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "HARDWARE LED FEEDBACK SYNC",
+                                subtitle: "Sends color velocities back to hardware LEDs",
+                                icon: "lightbulb.fill",
+                                isOn: Binding(
+                                    get: { engine.hardwareLEDSyncEnabled },
+                                    set: { val in
+                                        engine.hardwareLEDSyncEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_hw_led_sync_enabled")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "OS KEYBOARD SHORTCUTS / MACROS",
+                                subtitle: "Executes QWERTY keybinds on button press",
+                                icon: "command.square.fill",
+                                isOn: Binding(
+                                    get: { engine.qwertyKeybindsEnabled },
+                                    set: { val in
+                                        engine.qwertyKeybindsEnabled = val
+                                        UserDefaults.standard.set(val, forKey: "bb_hw_qwerty_enabled")
+                                    }
+                                ),
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "NETWORK OSC TRANSMISSION",
+                                subtitle: "Broadcasts OSC commands to QLab / DAWs",
+                                icon: "antenna.radiowaves.left.and.right",
+                                isOn: $engine.oscSendEnabled,
+                                scale: scale
+                            )
+
+                            sectionToggleRow(
+                                title: "STUDIO UI AUDIO CLICKS",
+                                subtitle: "Mechanical feedback sound effects",
+                                icon: "speaker.wave.2.fill",
+                                isOn: $engine.uiClickSoundEnabled,
+                                scale: scale
+                            )
+                        }
+                        .padding(5)
+                        .background(Color.black.opacity(0.40))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    // REAL-TIME PACKET COUNTERS
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("ROUTED")
+                                .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color(white: 0.6))
+                            Text("\(engine.routedMIDIPacketsCount)")
+                                .font(.system(size: 13 * scale, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color(red: 0.22, green: 0.96, blue: 0.65))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("MUTED / BLOCKED")
+                                .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color(white: 0.6))
+                            Text("\(engine.blockedMIDIPacketsCount)")
+                                .font(.system(size: 13 * scale, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color(red: 0.98, green: 0.45, blue: 0.45))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
+
+                        Button(action: {
+                            engine.routedMIDIPacketsCount = 0
+                            engine.blockedMIDIPacketsCount = 0
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(8)
+                                .background(Color.white.opacity(0.08))
+                                .foregroundColor(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Reset Packet Diagnostics")
+                    }
+                }
+                .padding(4)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func sectionToggleRow(title: String, subtitle: String, icon: String, isOn: Binding<Bool>, scale: CGFloat) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11 * scale, weight: .bold))
+                .foregroundColor(isOn.wrappedValue ? engine.currentTheme.accentPrimary : Color.white.opacity(0.35))
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10.5 * scale, weight: .semibold, design: .default))
+                    .foregroundColor(isOn.wrappedValue ? .white : Color.white.opacity(0.55))
+                Text(subtitle)
+                    .font(.system(size: 9.5 * scale, weight: .regular, design: .default))
+                    .foregroundColor(Color.white.opacity(0.40))
+            }
+
+            Spacer(minLength: 4)
+
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .scaleEffect(0.75)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3.5)
+        .background(isOn.wrappedValue ? Color.white.opacity(0.04) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     // ------------------------------------------------------------------------
@@ -13594,7 +16869,7 @@ struct ContentView: View {
                     SoundEffect.knobTick.play(with: engine.soundPack)
                 }) {
                     Text("BANK A–D")
-                        .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 3.5 * scale)
                         .background(activeMemoryBank == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -13609,7 +16884,7 @@ struct ContentView: View {
                         SoundEffect.knobTick.play(with: engine.soundPack)
                     }) {
                         Text("BANK E–H")
-                            .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 3.5 * scale)
                             .background(activeMemoryBank == 1 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -13619,7 +16894,7 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                 }
             }
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
                     // 2x2 Tactile Illuminated Memory Slot Pads (doubles in size when expanded!)
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 6 * scale), GridItem(.flexible(), spacing: 6 * scale)], spacing: 6 * scale) {
@@ -13640,7 +16915,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 3 * scale) {
                             HStack(spacing: 4 * scale) {
                                 Text("SLOT \(slotLetters[idx % 8])")
-                                    .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                                     .padding(.horizontal, 4.5 * scale)
                                     .padding(.vertical, 1.5 * scale)
                                     .background(isSelected ? slotAccent : Color.white.opacity(0.12))
@@ -13648,7 +16923,7 @@ struct ContentView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 3))
 
                                 Image(systemName: slot.iconName)
-                                    .font(.system(size: 8.5 * scale, weight: .bold))
+                                    .font(.system(size: 13.5 * scale, weight: .bold))
                                     .foregroundColor(isSelected ? .white : slotAccent)
 
                                 Spacer(minLength: 0)
@@ -13660,19 +16935,19 @@ struct ContentView: View {
                             }
 
                             Text(shortTitle.isEmpty ? slot.name : shortTitle)
-                                .font(.system(size: 7.5 * scale, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 12.5 * scale, weight: .heavy, design: .monospaced))
                                 .foregroundColor(isSelected ? .white : Color(white: 0.85))
                                 .lineLimit(1)
 
                             HStack(spacing: 4 * scale) {
                                 Text("\(litCount) LED")
-                                    .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 11.0 * scale, weight: .bold, design: .monospaced))
                                     .foregroundColor(isSelected ? slotAccent : Color(white: 0.55))
                                 Text("•")
-                                    .font(.system(size: 6 * scale, weight: .bold))
+                                    .font(.system(size: 11.0 * scale, weight: .bold))
                                     .foregroundColor(Color(white: 0.4))
                                 Text("\(macroCount) ACT")
-                                    .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 11.0 * scale, weight: .bold, design: .monospaced))
                                     .foregroundColor(macroCount > 0 ? Color.yellow.opacity(0.9) : Color(white: 0.55))
                                 Spacer(minLength: 0)
                             }
@@ -13721,7 +16996,7 @@ struct ContentView: View {
                             }
                         } label: {
                             Image(systemName: engine.slots[activeIdx].iconName)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 14.0, weight: .bold))
                                 .foregroundColor(activeSlotColor)
                                 .frame(width: 20, height: 20)
                                 .background(Color.white.opacity(0.08))
@@ -13730,25 +17005,65 @@ struct ContentView: View {
                         .menuStyle(.borderlessButton)
                         .frame(width: 22)
 
-                        // Editable Slot Name TextField
-                        TextField(
-                            "SLOT NAME",
-                            text: Binding(
-                                get: { engine.slots[activeIdx].name },
-                                set: { newVal in
-                                    engine.slots[activeIdx].name = newVal
-                                    engine.saveCurrentSlot()
+                        // Click-to-edit Slot Name to ensure keystrokes never get trapped
+                        if isEditingSlotName {
+                            HStack(spacing: 3) {
+                                TextField(
+                                    "SLOT NAME",
+                                    text: Binding(
+                                        get: { engine.slots[activeIdx].name },
+                                        set: { newVal in
+                                            engine.slots[activeIdx].name = newVal
+                                            engine.saveCurrentSlot()
+                                        }
+                                    ),
+                                    onCommit: {
+                                        isEditingSlotName = false
+                                        NSApp.keyWindow?.makeFirstResponder(nil)
+                                    }
+                                )
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
+                                .foregroundColor(.white)
+
+                                Button(action: {
+                                    isEditingSlotName = false
+                                    NSApp.keyWindow?.makeFirstResponder(nil)
+                                }) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(activeSlotColor)
                                 }
-                            )
-                        )
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3.5)
-                        .background(Color.black.opacity(0.55))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(activeSlotColor.opacity(0.45), lineWidth: 0.8))
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3.5)
+                            .background(Color.black.opacity(0.85))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(activeSlotColor, lineWidth: 1.2))
+                        } else {
+                            Button(action: {
+                                isEditingSlotName = true
+                            }) {
+                                HStack(spacing: 4) {
+                                    Text(engine.slots[activeIdx].name)
+                                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                        .foregroundColor(Color.white.opacity(0.40))
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(activeSlotColor.opacity(0.45), lineWidth: 0.8))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Click to rename memory slot")
+                        }
 
                         // Toggle Color Swatch Bar
                         Button(action: {
@@ -13757,7 +17072,7 @@ struct ContentView: View {
                             }
                         }) {
                             Image(systemName: showSlotCustomizer ? "paintpalette.fill" : "paintpalette")
-                                .font(.system(size: 8.5, weight: .bold))
+                                .font(.system(size: 13.5, weight: .bold))
                                 .foregroundColor(showSlotCustomizer ? .black : activeSlotColor)
                                 .frame(width: 20, height: 20)
                                 .background(showSlotCustomizer ? activeSlotColor : Color.white.opacity(0.08))
@@ -13769,12 +17084,12 @@ struct ContentView: View {
                     if showSlotCustomizer {
                         HStack(spacing: 4) {
                             Text("COLOR: \(BitchBoyHardwareColor.formattedLabel(for: engine.slots[activeIdx].accentVelocity))")
-                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                                 .foregroundColor(activeSlotColor)
                             Spacer(minLength: 0)
                         }
                         HStack(spacing: 4) {
-                            let swatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 83, 3]
+                            let swatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 83, 3]
                             ForEach(swatches, id: \.self) { vel in
                                 Circle()
                                     .fill(ledColor(vel))
@@ -13794,7 +17109,7 @@ struct ContentView: View {
                             Button("SYNC 49 LEDS") {
                                 engine.setZoneLEDs(range: 0..<49, velocity: engine.slots[activeIdx].accentVelocity)
                             }
-                            .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 11.0, weight: .heavy, design: .monospaced))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(activeSlotColor.opacity(0.25))
@@ -13821,7 +17136,7 @@ struct ContentView: View {
                         Image(systemName: "externaldrive.fill.badge.checkmark")
                         Text("SAVE")
                     }
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4.5)
                     .background(Color(red: 0.12, green: 0.46, blue: 0.36))
@@ -13841,9 +17156,9 @@ struct ContentView: View {
                 } label: {
                     HStack(spacing: 2) {
                         Image(systemName: "doc.on.doc.fill")
-                            .font(.system(size: 7))
+                            .font(.system(size: 12.0))
                         Text("CLONE")
-                            .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 11.0, weight: .heavy, design: .monospaced))
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
@@ -13862,7 +17177,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.up.doc.fill")
                         Text("EXP")
                     }
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4.5)
                     .background(Color.white.opacity(0.1))
@@ -13879,7 +17194,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.down.doc.fill")
                         Text("IMP")
                     }
-                    .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4.5)
                     .background(Color.white.opacity(0.1))
@@ -13892,7 +17207,7 @@ struct ContentView: View {
                     engine.resetCurrentSlotToDefault()
                 }) {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 7.5, weight: .heavy))
+                        .font(.system(size: 12.5, weight: .heavy))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4.5)
                         .background(Color(red: 0.48, green: 0.16, blue: 0.16))
@@ -13972,7 +17287,7 @@ struct ContentView: View {
                 }
             }
 
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 if engine.rightWingTab == "SEQUENCER" {
                     rightWingFrameSequencerContent
                 } else if engine.rightWingTab == "WAVESYNTH" {
@@ -13998,15 +17313,54 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Show Name + Play/Save Row (Clean layout that never overflows or truncates)
             HStack(spacing: 5) {
-                TextField("Show Name", text: $engine.editingCustomFX.name)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .textFieldStyle(.plain)
+                if isEditingShowName {
+                    HStack(spacing: 4) {
+                        TextField("Show Name", text: $engine.editingCustomFX.name, onCommit: {
+                            isEditingShowName = false
+                            NSApp.keyWindow?.makeFirstResponder(nil)
+                        })
+                        .font(.system(size: 13.0, weight: .bold, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        Button(action: {
+                            isEditingShowName = false
+                            NSApp.keyWindow?.makeFirstResponder(nil)
+                        }) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(engine.currentTheme.accentPrimary)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.55))
+                    .background(Color.black.opacity(0.85))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(engine.currentTheme.accentPrimary, lineWidth: 1.2))
                     .layoutPriority(1)
+                } else {
+                    Button(action: {
+                        isEditingShowName = true
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.45))
+                            Text(engine.editingCustomFX.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Click to Name Show..." : engine.editingCustomFX.name)
+                                .font(.system(size: 13.0, weight: .bold, design: .monospaced))
+                                .foregroundColor(engine.editingCustomFX.name.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.40) : Color.white)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4.5)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Click to rename show")
+                    .layoutPriority(1)
+                }
 
                 Button(action: {
                     if engine.isPlayingCustomFX {
@@ -14020,7 +17374,7 @@ struct ContentView: View {
                         Image(systemName: engine.isPlayingCustomFX ? "stop.fill" : "play.fill")
                         Text(engine.isPlayingCustomFX ? "STOP" : "PLAY")
                     }
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(engine.isPlayingCustomFX ? Color.red : engine.currentTheme.accentPrimary)
@@ -14034,7 +17388,7 @@ struct ContentView: View {
                     engine.saveEditingCustomFXToLibrary()
                 }) {
                     Text("💾 SAVE")
-                        .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 5)
                         .background(Color(red: 0.16, green: 0.45, blue: 0.34))
@@ -14056,7 +17410,7 @@ struct ContentView: View {
                         Image(systemName: isCurrentConnectFX ? "bolt.circle.fill" : "bolt.fill")
                         Text(isCurrentConnectFX ? "ON-CONNECT FX" : "SET AS ON-CONNECT")
                     }
-                    .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4.5)
                     .background(isCurrentConnectFX ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
@@ -14073,7 +17427,7 @@ struct ContentView: View {
                         Image(systemName: engine.paintOnMainChassis ? "paintbrush.pointed.fill" : "paintbrush")
                         Text(engine.paintOnMainChassis ? "PAINTING: ON" : "PAINT ON 49 KEYS")
                     }
-                    .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4.5)
                     .background(engine.paintOnMainChassis ? Color(red: 0.95, green: 0.50, blue: 0.15) : Color.white.opacity(0.08))
@@ -14088,16 +17442,16 @@ struct ContentView: View {
                 HStack {
                     let safeFrame = min(max(0, engine.editingFrameIndex), max(0, engine.editingCustomFX.frames.count - 1))
                     Text("FRAME \(safeFrame + 1)/\(engine.editingCustomFX.frames.count) CANVAS (CLICK TO PAINT)")
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(Color(white: 0.65))
                     Spacer()
                     HStack(spacing: 3) {
                         Text("BRUSH: \(BitchBoyHardwareColor.formattedLabel(for: engine.customBrushVelocity))")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                             .foregroundColor(ledColor(engine.customBrushVelocity))
                         HStack(spacing: 1.5) {
                             Text("V:")
-                                .font(.system(size: 6, weight: .bold, design: .monospaced))
+                                .font(.system(size: 11.0, weight: .bold, design: .monospaced))
                                 .foregroundColor(Color(white: 0.5))
                             TextField("78", text: Binding(
                                 get: { String(engine.customBrushVelocity) },
@@ -14107,7 +17461,7 @@ struct ContentView: View {
                                     }
                                 }
                             ))
-                            .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                             .textFieldStyle(.plain)
                             .multilineTextAlignment(.center)
                             .frame(width: 24, height: 13)
@@ -14145,7 +17499,7 @@ struct ContentView: View {
                     // Mini 3x3 Keypad
                     VStack(spacing: 2) {
                         Text("3x3")
-                            .font(.system(size: 6, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11.0, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(white: 0.5))
                         ForEach(0..<3, id: \.self) { r in
                             HStack(spacing: 2) {
@@ -14168,13 +17522,13 @@ struct ContentView: View {
             // 13 Authentic BitchBoy Hardware Color Swatches
             VStack(alignment: .leading, spacing: 3) {
                 Text("AUTHENTIC HARDWARE COLOR PALETTE")
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
 
                 let swatches: [(String, UInt8)] = [
                     ("OFF", 0), ("WHT", 3), ("TRQ", 33), ("BLU", 41),
                     ("ORG", 61), ("PRP", 67), ("RED", 72), ("YLW", 74),
-                    ("CYN", 78), ("BRN", 83), ("GRN", 87), ("PNK", 95), ("AMB", 96)
+                    ("CYN", 78), ("BRN", 83), ("GRN", 87), ("PNK", 57), ("AMB", 96)
                 ]
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 7), spacing: 3) {
                     ForEach(swatches, id: \.1) { item in
@@ -14187,7 +17541,7 @@ struct ContentView: View {
                                     .fill(item.1 == 0 ? Color(white: 0.35) : ledColor(item.1))
                                     .frame(width: 7, height: 7)
                                 Text(item.0)
-                                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 4)
@@ -14205,17 +17559,29 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text("TIMELINE FRAMES")
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.headerText)
                     Spacer()
                     Button("+ ADD") { engine.addCustomFXFrame() }
-                        .buttonStyle(.plain).font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5).padding(.vertical, 2).background(engine.currentTheme.accentPrimary.opacity(0.25)).foregroundColor(engine.currentTheme.accentPrimary).clipShape(RoundedRectangle(cornerRadius: 3))
                     Button("📋 DUP") { engine.duplicateCustomFXFrame() }
-                        .buttonStyle(.plain).font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5).padding(.vertical, 2).background(Color.white.opacity(0.12)).foregroundColor(.white).clipShape(RoundedRectangle(cornerRadius: 3))
+                    Button("📋 COPY") { engine.copyCurrentFXFrame() }
+                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 5).padding(.vertical, 2).background(Color.white.opacity(0.12)).foregroundColor(.white).clipShape(RoundedRectangle(cornerRadius: 3))
+                        .help("Copy current frame LEDs")
+                    Button("📥 PASTE") { engine.pasteFXFrame() }
+                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(engine.hasCopiedFXFrame ? engine.currentTheme.accentPrimary.opacity(0.25) : Color.white.opacity(0.05))
+                        .foregroundColor(engine.hasCopiedFXFrame ? engine.currentTheme.accentPrimary : Color.white.opacity(0.3))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .disabled(!engine.hasCopiedFXFrame)
+                        .help("Paste copied frame LEDs")
                     Button("🗑️ DEL") { engine.deleteCustomFXFrame() }
-                        .buttonStyle(.plain).font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 5).padding(.vertical, 2).background(Color.red.opacity(0.25)).foregroundColor(Color(red: 1, green: 0.5, blue: 0.5)).clipShape(RoundedRectangle(cornerRadius: 3))
                 }
 
@@ -14228,7 +17594,7 @@ struct ContentView: View {
                                 engine.previewCurrentCustomFrameOnHardware()
                             }) {
                                 Text("F\(fIdx + 1)")
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 4)
                                     .background(isCur ? engine.currentTheme.accentPrimary : Color.black.opacity(0.5))
@@ -14244,7 +17610,7 @@ struct ContentView: View {
             // 1-Click Pattern Shifters & Frame Tools
             VStack(alignment: .leading, spacing: 3) {
                 Text("PATTERN SHIFTERS & GENERATORS")
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
 
                 HStack(spacing: 3) {
@@ -14267,26 +17633,26 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text("SPEED: \(Int(engine.editingCustomFX.fps)) FPS")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Slider(value: $engine.editingCustomFX.fps, in: 1...24, step: 1) { _ in
                         if engine.isPlayingCustomFX {
                             engine.playCustomEffect(engine.editingCustomFX)
                         }
                     }
-                    .accentColor(engine.currentTheme.accentPrimary)
+                    .tint(engine.currentTheme.accentPrimary)
                 }
 
                 HStack(spacing: 4) {
                     Text("MODE:")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Spacer()
                     ForEach(CustomFXLoopMode.allCases) { lm in
                         Button(lm.rawValue) {
                             engine.editingCustomFX.loopMode = lm
                         }
-                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(engine.editingCustomFX.loopMode == lm ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
@@ -14305,19 +17671,58 @@ struct ContentView: View {
     private var rightWingWaveSynthContent: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("PROCEDURAL LIGHTING SYNTHESIZER")
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .foregroundColor(engine.currentTheme.headerText)
 
-            TextField("Synth Show Name", text: $engine.editingCustomFX.name)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .textFieldStyle(.plain)
+            if isEditingSynthName {
+                HStack(spacing: 4) {
+                    TextField("Synth Show Name", text: $engine.editingCustomFX.name, onCommit: {
+                        isEditingSynthName = false
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                    })
+                    .font(.system(size: 13.0, weight: .bold, design: .monospaced))
+                    .textFieldStyle(.plain)
+                    Button(action: {
+                        isEditingSynthName = false
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                    }) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(engine.currentTheme.accentPrimary)
+                    }
+                    .buttonStyle(.plain)
+                }
                 .padding(5)
-                .background(Color.black.opacity(0.5))
+                .background(Color.black.opacity(0.85))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(engine.currentTheme.accentPrimary, lineWidth: 1.2))
+            } else {
+                Button(action: {
+                    isEditingSynthName = true
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.45))
+                        Text(engine.editingCustomFX.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Click to Name Synth Show..." : engine.editingCustomFX.name)
+                            .font(.system(size: 13.0, weight: .bold, design: .monospaced))
+                            .foregroundColor(engine.editingCustomFX.name.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.40) : Color.white)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Click to rename synth show")
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("WAVEFORM FORMULA:")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.7))
                 Picker("", selection: $engine.editingCustomFX.waveShape) {
                     ForEach(CustomWaveShape.allCases) { ws in
@@ -14325,10 +17730,10 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
 
                 Text("VECTOR DIRECTION:")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(white: 0.7))
                 Picker("", selection: $engine.editingCustomFX.waveDirection) {
                     ForEach(CustomWaveDirection.allCases) { wd in
@@ -14336,33 +17741,33 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
 
                 HStack {
                     Text("DENSITY:")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Slider(value: $engine.editingCustomFX.waveFrequency, in: 0.3...3.0, step: 0.1)
-                        .accentColor(engine.currentTheme.accentPrimary)
+                        .tint(engine.currentTheme.accentPrimary)
                     Text(String(format: "%.1fx", engine.editingCustomFX.waveFrequency))
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
 
                 HStack {
                     Text("SPEED FPS:")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Slider(value: $engine.editingCustomFX.fps, in: 2...25, step: 1)
-                        .accentColor(engine.currentTheme.accentPrimary)
+                        .tint(engine.currentTheme.accentPrimary)
                     Text("\(Int(engine.editingCustomFX.fps))")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
                 }
 
                 HStack {
                     Text("MIN COLOR: \(BitchBoyHardwareColor.formattedLabel(for: engine.editingCustomFX.minVelocity))")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(ledColor(engine.editingCustomFX.minVelocity))
                     Slider(
                         value: Binding(
@@ -14376,7 +17781,7 @@ struct ContentView: View {
 
                 HStack {
                     Text("MAX COLOR: \(BitchBoyHardwareColor.formattedLabel(for: engine.editingCustomFX.maxVelocity))")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.0, weight: .bold, design: .monospaced))
                         .foregroundColor(ledColor(engine.editingCustomFX.maxVelocity))
                     Slider(
                         value: Binding(
@@ -14400,7 +17805,7 @@ struct ContentView: View {
                     Image(systemName: "play.circle.fill")
                     Text("▶️ STREAM LIVE SYNTH TO BITCHBOY")
                 }
-                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.5, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .background(engine.currentTheme.accentPrimary)
@@ -14416,7 +17821,7 @@ struct ContentView: View {
                     Image(systemName: "film.stack")
                     Text("⚡ BAKE INTO 12 KEYFRAMES FOR EDITING")
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .background(Color(red: 0.92, green: 0.52, blue: 0.16))
@@ -14430,7 +17835,7 @@ struct ContentView: View {
                 engine.saveEditingCustomFXToLibrary()
             }) {
                 Text("💾 SAVE PROCEDURAL SHOW TO MY SHOWS")
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
                     .background(Color(red: 0.16, green: 0.45, blue: 0.34))
@@ -14448,7 +17853,7 @@ struct ContentView: View {
                     engine.createNewBlankCustomFX()
                     engine.rightWingTab = "SEQUENCER"
                 }
-                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
                 .background(engine.currentTheme.accentPrimary)
@@ -14459,7 +17864,7 @@ struct ContentView: View {
                 Button("⚡ TEST CONNECT FX") {
                     engine.triggerBitchBoyConnectedNotificationFX(isManualTest: true)
                 }
-                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 11.5, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
                 .background(Color(red: 0.96, green: 0.76, blue: 0.18).opacity(0.25))
@@ -14470,17 +17875,17 @@ struct ContentView: View {
                 Spacer()
 
                 Button("⤓ EXPORT") { engine.exportCustomFXToClipboard() }
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5).padding(.vertical, 4)
                     .background(Color.white.opacity(0.1)).foregroundColor(.white).clipShape(RoundedRectangle(cornerRadius: 4)).buttonStyle(.plain)
 
                 Button("⤒ IMPORT") { engine.importCustomFXFromClipboard() }
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5).padding(.vertical, 4)
                     .background(Color.white.opacity(0.1)).foregroundColor(.white).clipShape(RoundedRectangle(cornerRadius: 4)).buttonStyle(.plain)
             }
 
-            ScrollView {
+            ScrollView([.vertical], showsIndicators: false) {
                 VStack(spacing: 5) {
                     ForEach(engine.customEffects) { fx in
                         let isRunning = engine.isPlayingCustomFX && engine.activeCustomFXName == fx.name
@@ -14489,12 +17894,12 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 4) {
                                     Text(fx.name)
-                                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                        .font(.system(size: 13.0, weight: .heavy, design: .monospaced))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
                                     if isConnectFX {
                                         Text("ON-CONNECT")
-                                            .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
+                                            .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                                             .padding(.horizontal, 4)
                                             .padding(.vertical, 1)
                                             .background(Color(red: 0.96, green: 0.76, blue: 0.18))
@@ -14503,7 +17908,7 @@ struct ContentView: View {
                                     }
                                 }
                                 Text(fx.isProcedural ? "WAVE SYNTH // \(fx.waveShape.rawValue)" : "\(fx.frames.count) FRAMES // \(Int(fx.fps)) FPS // \(fx.loopMode.rawValue)")
-                                    .font(.system(size: 6.5, design: .monospaced))
+                                    .font(.system(size: 11.5, design: .monospaced))
                                     .foregroundColor(Color(white: 0.6))
                             }
                             Spacer()
@@ -14511,7 +17916,7 @@ struct ContentView: View {
                                 engine.setAsOnConnectFX(fx)
                             }) {
                                 Image(systemName: isConnectFX ? "bolt.circle.fill" : "bolt.fill")
-                                    .font(.system(size: 8))
+                                    .font(.system(size: 13.0))
                                     .padding(4)
                                     .background(isConnectFX ? Color(red: 0.96, green: 0.76, blue: 0.18) : Color.white.opacity(0.12))
                                     .foregroundColor(isConnectFX ? .black : Color(red: 0.96, green: 0.78, blue: 0.25))
@@ -14526,7 +17931,7 @@ struct ContentView: View {
                                     engine.playCustomEffect(fx)
                                 }
                             }
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12.0, weight: .heavy, design: .monospaced))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 4)
                             .background(isRunning ? Color.red : engine.currentTheme.accentPrimary)
@@ -14537,7 +17942,7 @@ struct ContentView: View {
                             Button("✏️") {
                                 engine.selectCustomFXForEditing(fx)
                             }
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.system(size: 12.0, design: .monospaced))
                             .padding(4)
                             .background(Color.white.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -14546,7 +17951,7 @@ struct ContentView: View {
                             Button("🗑️") {
                                 engine.deleteSavedCustomFX(fx)
                             }
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.system(size: 12.0, design: .monospaced))
                             .padding(4)
                             .background(Color.red.opacity(0.22))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -14624,7 +18029,7 @@ struct ContentView: View {
                             .fill(isEnabled ? Color.green : Color(white: 0.4))
                             .frame(width: 5, height: 5)
                         Text(isEnabled ? "FX ACTIVE" : "FX OFF")
-                            .font(.system(size: 7.2 * scale, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                     }
                     .padding(.horizontal, 5 * scale)
                     .padding(.vertical, 3 * scale)
@@ -14638,18 +18043,18 @@ struct ContentView: View {
 
                 HStack(spacing: 3) {
                     Text("SPEED:")
-                        .font(.system(size: 6.5 * scale, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11.5 * scale, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white: 0.7))
                     Slider(value: $engine.reactiveFXSpeed, in: 0.4...3.0, step: 0.1)
                         .frame(width: 50 * scale)
-                        .accentColor(activeColor)
+                        .tint(activeColor)
                     Text(String(format: "%.1fx", engine.reactiveFXSpeed))
-                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                         .foregroundColor(activeColor)
                 }
             }
 
-            ScrollView([.vertical], showsIndicators: true) {
+            ScrollView([.vertical], showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
                     // 6 Interactive Mechanical Keyboard FX Mode Pads (2x3 Grid)
                     let modes: [ReactiveKeyFXMode] = [.ripple, .crossLaser, .supernova, .heatTrail, .meteorRain, .arcLightning]
@@ -14665,7 +18070,7 @@ struct ContentView: View {
                                         .font(.system(size: 12 * scale, weight: .bold))
                                         .foregroundColor(isSel ? .black : activeColor)
                                     Text(mode.rawValue)
-                                        .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                                        .font(.system(size: 13.5 * scale, weight: .heavy, design: .monospaced))
                                         .foregroundColor(isSel ? .black : .white)
                                         .lineLimit(1)
                                 }
@@ -14695,9 +18100,9 @@ struct ContentView: View {
                             }) {
                                 HStack(spacing: 3) {
                                     Text("🌈")
-                                        .font(.system(size: 7.5 * scale))
+                                        .font(.system(size: 12.5 * scale))
                                     Text("PRISM RAINBOW")
-                                        .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                        .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 6 * scale)
@@ -14714,11 +18119,11 @@ struct ContentView: View {
                             if !engine.reactiveFXRainbowColor {
                                 HStack(spacing: 3) {
                                     Text(BitchBoyHardwareColor.formattedLabel(for: engine.reactiveFXColorVelocity))
-                                        .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                                        .font(.system(size: 12.0 * scale, weight: .bold, design: .monospaced))
                                         .foregroundColor(ledColor(engine.reactiveFXColorVelocity))
                                     HStack(spacing: 1.5) {
                                         Text("V:")
-                                            .font(.system(size: 6 * scale, weight: .bold, design: .monospaced))
+                                            .font(.system(size: 11.0 * scale, weight: .bold, design: .monospaced))
                                             .foregroundColor(Color(white: 0.5))
                                         TextField("78", text: Binding(
                                             get: { String(engine.reactiveFXColorVelocity) },
@@ -14728,7 +18133,7 @@ struct ContentView: View {
                                                 }
                                             }
                                         ))
-                                        .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                                        .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                                         .textFieldStyle(.plain)
                                         .multilineTextAlignment(.center)
                                         .frame(width: 24 * scale, height: 13 * scale)
@@ -14739,14 +18144,14 @@ struct ContentView: View {
                                 }
                             } else {
                                 Text("MULTI-COLOR")
-                                    .font(.system(size: 7 * scale, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 12.0 * scale, weight: .bold, design: .monospaced))
                                     .foregroundColor(engine.currentTheme.accentPrimary)
                             }
                         }
 
                         // 12 Color Swatches
                         HStack(spacing: 4 * scale) {
-                            let colorSwatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 95, 83, 3]
+                            let colorSwatches: [UInt8] = [72, 61, 96, 74, 87, 33, 78, 41, 67, 57, 83, 3]
                             ForEach(colorSwatches, id: \.self) { vel in
                                 let isPicked = (!engine.reactiveFXRainbowColor && engine.reactiveFXColorVelocity == vel)
                                 Circle()
@@ -14777,9 +18182,9 @@ struct ContentView: View {
                         }) {
                             HStack(spacing: 4 * scale) {
                                 Image(systemName: "hand.tap.fill")
-                                    .font(.system(size: 8 * scale))
+                                    .font(.system(size: 13.0 * scale))
                                 Text("TEST RIPPLE PULSE")
-                                    .font(.system(size: 7 * scale, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 12.0 * scale, weight: .heavy, design: .monospaced))
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5 * scale)
@@ -14791,7 +18196,7 @@ struct ContentView: View {
                         .buttonStyle(.plain)
 
                         Text(engine.reactiveWaveCount == 0 ? "PRESS ANY KEY" : "⚡ \(engine.reactiveWaveCount) WAVES")
-                            .font(.system(size: 6.5 * scale, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
                             .foregroundColor(engine.reactiveWaveCount == 0 ? Color(white: 0.55) : Color.yellow)
                             .padding(.horizontal, 6 * scale)
                             .padding(.vertical, 5 * scale)
@@ -14817,9 +18222,9 @@ struct ContentView: View {
     private func wingTabButton(title: String, active: Bool, scale: CGFloat = 1.0, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 9.5 * scale, weight: .heavy, design: .monospaced))
+                .font(.system(size: 12 * scale, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 5 * scale)
+                .padding(.vertical, 6.5 * scale)
                 .background(active ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
                 .foregroundColor(active ? .black : Color(white: 0.88))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -14832,9 +18237,9 @@ struct ContentView: View {
         Button(action: { isOn.wrappedValue.toggle() }) {
             HStack(spacing: 3 * scale) {
                 Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 9 * scale))
+                    .font(.system(size: 11 * scale))
                 Text(label)
-                    .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 11.5 * scale, weight: .heavy, design: .monospaced))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4 * scale)
@@ -14853,7 +18258,7 @@ struct ContentView: View {
                     .font(.system(size: 13 * scale, weight: .bold))
                     .foregroundColor(engine.currentTheme.accentPrimary)
                 Text(title)
-                    .font(.system(size: 8.5 * scale, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 13.5 * scale, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -14892,7 +18297,7 @@ struct ContentView: View {
     private func miniToolBtn(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
                 .background(Color.white.opacity(0.12))
@@ -14908,11 +18313,22 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section1KeyGrid8x4: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("1. TOP-LEFT 8X4 KEY GRID (32 KEYS)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 6) {
+                Text("1. 8X4 KEY GRID")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("32 KEYS")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.15, green: 0.85, blue: 0.95))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color(red: 0.15, green: 0.85, blue: 0.95).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.keyGrid8x4) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -14926,24 +18342,21 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.keyGrid8x4)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out 8x4 Key Grid into Floating Window")
-
-                Text("CLICK KEY OR PRESS BITCHBOY")
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(red: 0.15, green: 0.85, blue: 0.95))
             }
-            .frame(width: 410)
+            .frame(width: 486)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 7) {
                 ForEach(0..<4, id: \.self) { r in
-                    HStack(spacing: 4) {
+                    HStack(spacing: 7) {
                         ForEach(0..<8, id: \.self) { c in
                             let idx = r * 8 + c
                             HardwareKeyCap(
@@ -14951,6 +18364,8 @@ struct ContentView: View {
                                 isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
                                 color: ledColor(engine.controls[idx].currentLED),
                                 sectionBorder: engine.currentTheme.sectionOutline,
+                                keyWidth: 52,
+                                keyHeight: 45,
                                 onTap: {
                                     isEditingNameBox = false
                                     let isShift = NSEvent.modifierFlags.contains(.shift)
@@ -14958,19 +18373,41 @@ struct ContentView: View {
                                 }
                             )
                             .equatable()
+                            .contextMenu { controlContextMenu(for: idx) }
                         }
                     }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.8))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 0))
+            .overlay {
+                if !engine.isSectionEnabled(for: 0) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        VStack(spacing: 5) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("KEY GRID // BLACKOUT")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
         }
-        .frame(width: 410)
+        .frame(width: 486)
     }
 
     // ------------------------------------------------------------------------
@@ -14978,11 +18415,22 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section2KeyStrip1x8: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("2. MIDDLE 1X8 KEY STRIP (8 KEYS)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 6) {
+                Text("2. 1X8 KEY STRIP")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("8 KEYS")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color(red: 0.96, green: 0.78, blue: 0.35).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.keyStrip1x8) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -14996,45 +18444,66 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.keyStrip1x8)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out 1x8 Key Strip into Floating Window")
-
-                Text("ICON SHOWS MAPPED ACTION")
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
             }
-            .frame(width: 410)
+            .frame(width: 486)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 7) {
                 ForEach(32..<40, id: \.self) { idx in
                     HardwareKeyCap(
                         item: engine.controls[idx],
                         isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
                         color: ledColor(engine.controls[idx].currentLED),
                         sectionBorder: engine.currentTheme.sectionOutline,
+                        keyWidth: 52,
+                        keyHeight: 45,
                         onTap: {
                             let isShift = NSEvent.modifierFlags.contains(.shift)
                             engine.handleKeyPressWithModifiers(index: idx, isShiftDown: isShift)
                         }
                     )
                     .equatable()
+                    .contextMenu { controlContextMenu(for: idx) }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.8))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 32))
+            .overlay {
+                if !engine.isSectionEnabled(for: 32) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        HStack(spacing: 6) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("KEY STRIP // BLACKOUT")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
         }
-        .frame(width: 410)
+        .frame(width: 486)
     }
 
     // ------------------------------------------------------------------------
@@ -15042,11 +18511,22 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section4VerticalFaders: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("4. BOTTOM-LEFT 8 VERTICAL FADERS (CC 0–7)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 6) {
+                Text("4. 8 V-FADERS")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("CC 0–7")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.22, green: 0.96, blue: 0.76))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color(red: 0.22, green: 0.96, blue: 0.76).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.verticalFaders) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -15066,10 +18546,12 @@ struct ContentView: View {
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "slider.vertical.3")
-                        Text(engine.vuMeterLEDsEnabled ? "VU METER LEDS: ON" : "VU METER LEDS: OFF")
+                        Text(engine.vuMeterLEDsEnabled ? "VU LEDS: ON" : "VU LEDS: OFF")
+                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                            .lineLimit(1)
                     }
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.black.opacity(0.5))
                     .foregroundColor(engine.vuMeterLEDsEnabled ? Color(red: 0.22, green: 0.96, blue: 0.76) : Color(white: 0.6))
@@ -15082,33 +18564,62 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.verticalFaders)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out Vertical Faders into Floating Window")
             }
-            .frame(width: 410)
+            .frame(width: 486)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 7) {
                 ForEach(49..<57, id: \.self) { idx in
                     HardwareVerticalFader(
                         item: engine.controls[idx],
                         isSelected: engine.selectedIndex == idx,
+                        faderWidth: 52,
+                        faderHeight: 210,
                         onSelect: { engine.selectedIndex = idx },
                         onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                     )
                     .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Color.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 49))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .overlay {
+                if !engine.isSectionEnabled(for: 49) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        VStack(spacing: 6) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("V-FADERS // BLACKOUT")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
         }
-        .frame(width: 410)
+        .frame(width: 486)
     }
 
     // ------------------------------------------------------------------------
@@ -15116,11 +18627,22 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var section5HorizontalFaders: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("5. 4 HORIZONTAL FADERS (CC 8–11)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 5) {
+                Text("5. 4 H-FADERS")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("CC 8–11")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.horizontalFaders) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -15134,15 +18656,17 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.horizontalFaders)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out Horizontal Faders into Floating Window")
             }
+            .frame(width: 280)
 
             VStack(spacing: 3) {
                 ForEach(57..<61, id: \.self) { idx in
@@ -15153,24 +18677,61 @@ struct ContentView: View {
                         onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                     )
                     .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(Color.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 57))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .overlay {
+                if !engine.isSectionEnabled(for: 57) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        VStack(spacing: 5) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("H-FADERS // BLACKOUT")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
         }
     }
 
-    // ------------------------------------------------------------------------
+    // ----------------------------–-------------------------------------------
     // SECTION 6: 2X4 ROTARY KNOBS (CC 20–27)
     // ------------------------------------------------------------------------
     private var section6RotaryKnobs: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("6. 2X4 KNOBS (CC 20–27)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 5) {
+                Text("6. 2X4 KNOBS")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("CC 20–27")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.rotaryKnobs) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -15184,19 +18745,21 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.rotaryKnobs)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out Rotary Knobs into Floating Window")
             }
+            .frame(width: 226)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 ForEach(0..<4, id: \.self) { r in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 20) {
                         ForEach(0..<2, id: \.self) { c in
                             let idx = 61 + r * 2 + c
                             HardwareKnob(
@@ -15206,13 +18769,170 @@ struct ContentView: View {
                                 onValueChange: { val in engine.setControlLiveValue(index: idx, value: val) }
                             )
                             .equatable()
+                                .contextMenu { controlContextMenu(for: idx) }
                         }
                     }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(width: 226)
             .background(Color.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 61))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
+            )
+            .overlay {
+                if !engine.isSectionEnabled(for: 61) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        VStack(spacing: 6) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("KNOBS // BLACKOUT")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
+        }
+        .frame(width: 226)
+    }
+
+    @ViewBuilder
+    private func controlContextMenu(for index: Int) -> some View {
+        if index >= 0 && index < engine.controls.count {
+            let item = engine.controls[index]
+            Button(action: {
+                mappingEditorTarget = ControlMappingTarget(id: index)
+            }) {
+                Label("Edit Mapping & Assignment…", systemImage: "slider.horizontal.3")
+            }
+
+            Divider()
+
+            Button(action: {
+                engine.copyControl(index: index)
+            }) {
+                Label("Copy Configuration (⌘C)", systemImage: "doc.on.doc")
+            }
+
+            Button(action: {
+                engine.pasteControl(to: index)
+            }) {
+                Label("Paste Configuration (⌘V)", systemImage: "doc.badge.arrow.up")
+            }
+            .disabled(!engine.hasCopiedConfig)
+
+            Button(action: {
+                engine.duplicateControl(index: index)
+            }) {
+                Label("Duplicate to Adjacent Key", systemImage: "plus.square.on.square")
+            }
+
+            if item.hasLED {
+                Divider()
+                Button(action: {
+                    engine.copySelectedColor(index: index)
+                }) {
+                    Label("Copy LED Color", systemImage: "paintpalette")
+                }
+
+                Button(action: {
+                    engine.pasteColor(to: index)
+                }) {
+                    Label("Paste LED Color (⌥⌘V)", systemImage: "paintbrush.pointed")
+                }
+                .disabled(!engine.hasCopiedColor)
+
+                Menu("Set Authentic Hardware Color") {
+                    let swatches: [(String, UInt8)] = [
+                        ("OFF", 0), ("WHITE", 3), ("TURQUOISE", 33), ("BLUE", 41),
+                        ("ORANGE", 61), ("PURPLE", 67), ("RED", 72), ("YELLOW", 74),
+                        ("CYAN", 78), ("BROWN", 83), ("GREEN", 87), ("PINK", 57), ("AMBER", 96)
+                    ]
+                    ForEach(swatches, id: \.1) { swatch in
+                        Button(action: {
+                            engine.recordUndoSnapshot(actionName: "Set Color \(swatch.0)")
+                            engine.controls[index].activeVelocity = swatch.1
+                            engine.controls[index].idleVelocity = swatch.1
+                            engine.controls[index].currentLED = swatch.1
+                            engine.sendNoteOn(note: engine.controls[index].number, velocity: swatch.1)
+                            engine.saveCurrentSlot()
+                            SoundEffect.knobTick.play(with: engine.soundPack)
+                        }) {
+                            HStack {
+                                Text(swatch.0)
+                                if item.activeVelocity == swatch.1 {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(action: {
+                engine.resetControl(index: index)
+            }) {
+                Label("Reset to Factory Default", systemImage: "arrow.counterclockwise")
+            }
+
+            Divider()
+
+            Button(action: {
+                if engine.selectedIndices.contains(index) {
+                    engine.selectedIndices.remove(index)
+                } else {
+                    engine.selectedIndices.insert(index)
+                    engine.selectedIndex = index
+                }
+            }) {
+                Label(engine.selectedIndices.contains(index) ? "Deselect Control" : "Select Control (Multi-Select)",
+                      systemImage: engine.selectedIndices.contains(index) ? "checkmark.circle.fill" : "circle")
+            }
+
+            if engine.selectedIndices.count > 1 {
+                Button(action: {
+                    engine.pasteControlToSelected()
+                }) {
+                    Label("Paste Config to All \(engine.selectedIndices.count) Selected", systemImage: "square.on.square")
+                }
+                .disabled(!engine.hasCopiedConfig)
+
+                if item.hasLED {
+                    Button(action: {
+                        engine.pasteColorToSelected()
+                    }) {
+                        Label("Paste Color to All \(engine.selectedIndices.count) Selected", systemImage: "paintbrush")
+                    }
+                    .disabled(!engine.hasCopiedColor)
+                }
+            }
+
+            Button(action: {
+                engine.selectAllOfKind(item.kind)
+            }) {
+                Label("Select All \(item.kind.rawValue)s", systemImage: "square.grid.2x2")
+            }
+
+            Divider()
+
+            Button(action: {
+                engine.simulateKeyPress(at: index)
+            }) {
+                Label("Trigger / Test Control", systemImage: "bolt.fill")
+            }
         }
     }
 
@@ -15221,22 +18941,28 @@ struct ContentView: View {
     // ------------------------------------------------------------------------
     private var centerInspectorHUD: some View {
         ZStack {
-            // Inspector Bezel with screws
+            // Inspector Bezel: Sleek dark milled slate chassis with chamfered inner bevel
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(red: 0.05, green: 0.10, blue: 0.09))
+                .fill(Color(red: 0.08, green: 0.11, blue: 0.13))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             LinearGradient(
-                                colors: [Color(white: 0.95), Color(white: 0.75)],
+                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.10)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 3
+                            lineWidth: 1.5
                         )
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .stroke(engine.currentTheme.accentPrimary.opacity(0.30), lineWidth: 1)
+                        .padding(1)
+                )
+                .shadow(color: Color.black.opacity(0.55), radius: 8, x: 0, y: 3)
 
-            // 4 corner screws
+            // Precision Corner Screw Rivets
             VStack {
                 HStack {
                     ScrewRivetView(size: 9)
@@ -15250,13 +18976,13 @@ struct ContentView: View {
                     ScrewRivetView(size: 9)
                 }
             }
-            .padding(4)
+            .padding(5)
 
             // Inspector Content
             VStack(alignment: .leading, spacing: 6) {
                 // Header badge with Stepper and Pop-Out
-                HStack(spacing: 4) {
-                    HStack(spacing: 2.5) {
+                HStack(spacing: 5) {
+                    HStack(spacing: 3) {
                         Button(action: {
                             if engine.selectedIndex > 0 {
                                 engine.selectedIndex -= 1
@@ -15264,22 +18990,22 @@ struct ContentView: View {
                             }
                         }) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 7.5, weight: .bold))
-                                .frame(width: 16, height: 18)
-                                .background(Color.white.opacity(0.12))
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 20, height: 22)
+                                .background(Color.white.opacity(0.14))
                                 .foregroundColor(.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
                         .help("Previous Key/Control")
 
                         Text("\(selectedControl.label) // N\(selectedControl.number)")
-                            .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
                             .background(engine.currentTheme.accentPrimary)
                             .foregroundColor(.black)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .clipShape(RoundedRectangle(cornerRadius: 4.5))
 
                         Button(action: {
                             if engine.selectedIndex < engine.controls.count - 1 {
@@ -15288,11 +19014,11 @@ struct ContentView: View {
                             }
                         }) {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 7.5, weight: .bold))
-                                .frame(width: 16, height: 18)
-                                .background(Color.white.opacity(0.12))
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 20, height: 22)
+                                .background(Color.white.opacity(0.14))
                                 .foregroundColor(.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
                         .help("Next Key/Control")
@@ -15302,10 +19028,10 @@ struct ContentView: View {
 
                     if engine.detachedModules.contains(.colorPickerHUD) {
                         Text("POPPED OUT")
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(Color.cyan)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
                             .background(Color.cyan.opacity(0.15))
                             .clipShape(Capsule())
                     }
@@ -15314,44 +19040,166 @@ struct ContentView: View {
                         engine.popOutModuleToWindow(.colorPickerHUD)
                     }) {
                         Image(systemName: "macwindow.badge.plus")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(engine.currentTheme.accentPrimary)
-                            .padding(3)
-                            .background(Color.white.opacity(0.1))
-                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                            .frame(width: 28, height: 22)
+                            .background(Color.white.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 4.5))
                     }
                     .buttonStyle(.plain)
+                    .hoverGrow(1.08)
                     .help("Pop Out Color Picker / HUD into Floating Window")
 
                     // Multi-select indicator badge
                     if engine.selectedIndices.count > 1 {
                         Text("\(engine.selectedIndices.count) SEL")
-                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
+                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2.5)
                             .background(Color.cyan)
                             .foregroundColor(.black)
                             .clipShape(Capsule())
                     }
 
                     // Key color swatch preview & formatted label
-                    HStack(spacing: 3) {
-                        RoundedRectangle(cornerRadius: 3)
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 3.5)
                             .fill(ledColor(selectedControl.currentLED))
-                            .frame(width: 13, height: 13)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.4), lineWidth: 1))
+                            .frame(width: 15, height: 15)
+                            .overlay(RoundedRectangle(cornerRadius: 3.5).stroke(Color.white.opacity(0.4), lineWidth: 1))
                         Text(BitchBoyHardwareColor.formattedLabel(for: selectedControl.currentLED))
-                            .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(ledColor(selectedControl.currentLED))
                             .lineLimit(1)
                     }
                 }
 
-                // Custom Name Editor (Only opens for typing when explicitly clicked!)
-                HStack(spacing: 4) {
+                // Quick Actions Toolbar: Copy, Paste, Paste Color, Undo, Redo, Reset
+                HStack(spacing: 3) {
+                    Button(action: {
+                        engine.copyControl(index: engine.selectedIndex)
+                    }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("COPY")
+                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.10))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy control settings (⌘C)")
+
+                    Button(action: {
+                        engine.pasteControlToSelected()
+                    }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "doc.badge.arrow.up")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text(engine.selectedIndices.count > 1 ? "PASTE (\(engine.selectedIndices.count))" : "PASTE")
+                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary.opacity(0.25) : Color.white.opacity(0.04))
+                        .foregroundColor(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary : Color.white.opacity(0.3))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .overlay(RoundedRectangle(cornerRadius: 3.5).stroke(engine.hasCopiedConfig ? engine.currentTheme.accentPrimary.opacity(0.4) : Color.clear, lineWidth: 0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.hasCopiedConfig)
+                    .help("Paste control settings (⌘V)")
+
+                    if selectedControl.hasLED {
+                        Button(action: {
+                            engine.pasteColorToSelected()
+                        }) {
+                            HStack(spacing: 2) {
+                                Image(systemName: "paintbrush.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("COLOR")
+                                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                            }
+                            .padding(.horizontal, 4.5)
+                            .padding(.vertical, 3)
+                            .background(engine.hasCopiedColor ? Color.orange.opacity(0.22) : Color.white.opacity(0.04))
+                            .foregroundColor(engine.hasCopiedColor ? Color.orange : Color.white.opacity(0.3))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!engine.hasCopiedColor)
+                        .help("Paste copied color velocity (⌥⌘V)")
+                    }
+
+                    Spacer(minLength: 2)
+
+                    Button(action: {
+                        engine.undo()
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 9.5, weight: .bold))
+                            if engine.undoStepsCount > 0 {
+                                Text("\(engine.undoStepsCount)")
+                                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                            }
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(engine.canUndo ? 0.10 : 0.04))
+                        .foregroundColor(engine.canUndo ? engine.currentTheme.accentPrimary : Color.white.opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.canUndo)
+                    .help("Undo (⌘Z) - \(engine.lastUndoActionName.isEmpty ? "None" : engine.lastUndoActionName)")
+
+                    Button(action: {
+                        engine.redo()
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.uturn.forward")
+                                .font(.system(size: 9.5, weight: .bold))
+                            if engine.redoStepsCount > 0 {
+                                Text("\(engine.redoStepsCount)")
+                                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                            }
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(engine.canRedo ? 0.10 : 0.04))
+                        .foregroundColor(engine.canRedo ? engine.currentTheme.accentPrimary : Color.white.opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!engine.canRedo)
+                    .help("Redo (⇧⌘Z) - \(engine.lastRedoActionName.isEmpty ? "None" : engine.lastRedoActionName)")
+
+                    Button(action: {
+                        engine.resetSelectedControls()
+                    }) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 3)
+                            .background(Color.red.opacity(0.18))
+                            .foregroundColor(Color(red: 1, green: 0.5, blue: 0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset selected control to factory default")
+                }
+                .padding(.vertical, 2)
+
+                // Custom Name Editor
+                HStack(spacing: 5) {
                     Text("NAME:")
-                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                        .foregroundColor(Color(white: 0.6))
+                        .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color(white: 0.70))
 
                     if isEditingNameBox {
                         TextField("Custom Name", text: $engine.controls[engine.selectedIndex].customName, onCommit: {
@@ -15359,14 +19207,14 @@ struct ContentView: View {
                             engine.saveCurrentSlot()
                         })
                         .focused($isNameFieldFocused)
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .textFieldStyle(.plain)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.75))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.85))
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
-                                .stroke(engine.currentTheme.accentPrimary, lineWidth: 1.2)
+                                .stroke(engine.currentTheme.accentPrimary, lineWidth: 1.5)
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 4))
 
@@ -15375,32 +19223,32 @@ struct ContentView: View {
                             engine.saveCurrentSlot()
                         }) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 7, weight: .heavy))
-                                .padding(3)
+                                .font(.system(size: 9.5, weight: .heavy))
+                                .padding(4)
                                 .background(engine.currentTheme.accentPrimary)
                                 .foregroundColor(.black)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
                     } else {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             let custom = engine.controls[engine.selectedIndex].customName
                             Text(custom.isEmpty ? selectedControl.label : custom)
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .foregroundColor(custom.isEmpty ? Color(white: 0.5) : .white)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(custom.isEmpty ? Color(white: 0.55) : .white)
                                 .lineLimit(1)
                             Spacer()
                             Image(systemName: "pencil")
-                                .font(.system(size: 6.5))
-                                .foregroundColor(Color(white: 0.45))
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundColor(Color(white: 0.55))
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.black.opacity(0.45))
+                        .background(Color.black.opacity(0.55))
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                                .stroke(Color.white.opacity(0.22), lineWidth: 1)
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .contentShape(Rectangle())
@@ -15411,33 +19259,40 @@ struct ContentView: View {
                     }
                 }
 
-                // Subtitle
-                Text(selectedControl.zone)
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(engine.currentTheme.headerText)
-
-                // Feedback Mode Row
-                HStack {
-                    Text("Mode: \(selectedControl.feedbackMode.rawValue) // \(selectedControl.actionType.rawValue)")
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
-                    Spacer()
+                // Subtitle: Zone Location & Feedback Mode
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(selectedControl.zone)
+                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                            .foregroundColor(engine.currentTheme.headerText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer()
+                    }
+                    HStack {
+                        Text("MODE: \(selectedControl.feedbackMode.rawValue) // \(selectedControl.actionType.rawValue)")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer()
+                    }
                 }
 
                 if selectedControl.hasLED {
                     // Sub-Tab Switcher: LED Colors vs MIDI -> QWERTY Keyboard
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Button(action: {
                             inspectorTab = 0
                             SoundEffect.knobTick.play(with: engine.soundPack)
                         }) {
                             Text("💡 LED COLORS")
-                                .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 2.5)
+                                .padding(.vertical, 4)
                                 .background(inspectorTab == 0 ? engine.currentTheme.accentPrimary : Color.white.opacity(0.08))
-                                .foregroundColor(inspectorTab == 0 ? .black : Color(white: 0.75))
-                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                .foregroundColor(inspectorTab == 0 ? .black : Color(white: 0.80))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
 
@@ -15445,36 +19300,36 @@ struct ContentView: View {
                             inspectorTab = 1
                             SoundEffect.knobTick.play(with: engine.soundPack)
                         }) {
-                            HStack(spacing: 2) {
+                            HStack(spacing: 3) {
                                 Text("⌨️ QWERTY KEY")
                                 if selectedControl.actionType == .qwerty {
-                                    Circle().fill(Color(red: 0.98, green: 0.78, blue: 0.25)).frame(width: 4, height: 4)
+                                    Circle().fill(Color(red: 0.98, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)
                                 }
                             }
-                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 2.5)
+                            .padding(.vertical, 4)
                             .background(inspectorTab == 1 ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
-                            .foregroundColor(inspectorTab == 1 ? .black : Color(white: 0.75))
-                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                            .foregroundColor(inspectorTab == 1 ? .black : Color(white: 0.80))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
                     }
 
                     if inspectorTab == 0 {
                         // TAB 1: LED VELOCITIES & PALETTE
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 5) {
                                 Text(engine.selectedIndices.count > 1 ? "IDLE LED (BATCH):" : "IDLE LED:")
-                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                    .foregroundColor(Color(white: 0.7))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.80))
                                 Spacer()
 
                                 // Direct Velocity Number Input Box
-                                HStack(spacing: 2) {
+                                HStack(spacing: 3) {
                                     Text("VEL:")
-                                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                                        .foregroundColor(Color(white: 0.5))
+                                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.60))
                                     TextField("0", text: Binding(
                                         get: { String(engine.controls[engine.selectedIndex].idleVelocity) },
                                         set: { val in
@@ -15491,23 +19346,23 @@ struct ContentView: View {
                                             }
                                         }
                                     ))
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                     .textFieldStyle(.plain)
                                     .multilineTextAlignment(.center)
-                                    .frame(width: 28, height: 15)
-                                    .background(Color.black.opacity(0.6))
+                                    .frame(width: 34, height: 18)
+                                    .background(Color.black.opacity(0.7))
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                                        RoundedRectangle(cornerRadius: 3.5)
+                                            .stroke(Color.white.opacity(0.35), lineWidth: 1)
                                     )
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                 }
 
                                 Circle()
                                     .fill(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
-                                    .frame(width: 7, height: 7)
+                                    .frame(width: 9, height: 9)
                                 Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].idleVelocity))
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                                     .foregroundColor(ledColor(engine.controls[engine.selectedIndex].idleVelocity))
                             }
                             Slider(
@@ -15527,22 +19382,22 @@ struct ContentView: View {
                                 in: 0...127,
                                 step: 1
                             )
-                            .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
+                            .tint(Color(red: 0.85, green: 0.35, blue: 0.30))
                         }
 
                         // Pressed Velocity Slider
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 5) {
                                 Text(engine.selectedIndices.count > 1 ? "PRESSED LED (BATCH):" : "PRESSED LED:")
-                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                    .foregroundColor(Color(white: 0.7))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.80))
                                 Spacer()
 
                                 // Direct Velocity Number Input Box
-                                HStack(spacing: 2) {
+                                HStack(spacing: 3) {
                                     Text("VEL:")
-                                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                                        .foregroundColor(Color(white: 0.5))
+                                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.60))
                                     TextField("0", text: Binding(
                                         get: { String(engine.controls[engine.selectedIndex].activeVelocity) },
                                         set: { val in
@@ -15557,23 +19412,23 @@ struct ContentView: View {
                                             }
                                         }
                                     ))
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                     .textFieldStyle(.plain)
                                     .multilineTextAlignment(.center)
-                                    .frame(width: 28, height: 15)
-                                    .background(Color.black.opacity(0.6))
+                                    .frame(width: 34, height: 18)
+                                    .background(Color.black.opacity(0.7))
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                                        RoundedRectangle(cornerRadius: 3.5)
+                                            .stroke(Color.white.opacity(0.35), lineWidth: 1)
                                     )
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                 }
 
                                 Circle()
                                     .fill(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
-                                    .frame(width: 7, height: 7)
+                                    .frame(width: 9, height: 9)
                                 Text(BitchBoyHardwareColor.formattedLabel(for: engine.controls[engine.selectedIndex].activeVelocity))
-                                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                                     .foregroundColor(ledColor(engine.controls[engine.selectedIndex].activeVelocity))
                             }
                             Slider(
@@ -15591,25 +19446,25 @@ struct ContentView: View {
                                 in: 0...127,
                                 step: 1
                             )
-                            .accentColor(Color(red: 0.85, green: 0.35, blue: 0.30))
+                            .tint(Color(red: 0.85, green: 0.35, blue: 0.30))
                         }
 
                         // 13 Hardware Colors
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text("QUICK COLOR PALETTE:")
-                                .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(white: 0.55))
-                            HStack(spacing: 3) {
-                                let quickColors: [UInt8] = [0, 3, 33, 41, 61, 67, 72, 74, 78, 83, 87, 95, 96]
+                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                .foregroundColor(Color(white: 0.65))
+                            HStack(spacing: 4) {
+                                let quickColors: [UInt8] = [0, 3, 33, 41, 57, 61, 67, 72, 74, 78, 83, 87, 96]
                                 ForEach(quickColors, id: \.self) { vel in
                                     Circle()
                                         .fill(ledColor(vel))
-                                        .frame(width: 12, height: 12)
+                                        .frame(width: 14, height: 14)
                                         .overlay(
                                             Circle()
-                                                .stroke(Color.white, lineWidth: engine.controls[engine.selectedIndex].activeVelocity == vel ? 1.5 : 0)
+                                                .stroke(Color.white, lineWidth: engine.controls[engine.selectedIndex].activeVelocity == vel ? 2.0 : 0)
                                         )
-                                        .shadow(color: engine.controls[engine.selectedIndex].activeVelocity == vel ? ledColor(vel) : .clear, radius: 2)
+                                        .shadow(color: engine.controls[engine.selectedIndex].activeVelocity == vel ? ledColor(vel) : .clear, radius: 3)
                                         .onTapGesture {
                                             let targets = engine.selectedIndices.count > 1 ? engine.selectedIndices : [engine.selectedIndex]
                                             for idx in targets where engine.controls[idx].hasLED {
@@ -15621,30 +19476,30 @@ struct ContentView: View {
                                 }
                             }
                         }
-                        .padding(.top, 1)
+                        .padding(.top, 2)
 
                         // Large Fill Buttons
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             Button("FILL 8x4") { engine.setZoneLEDs(range: 0..<32, velocity: selectedControl.idleVelocity) }
                             Button("FILL 1x8") { engine.setZoneLEDs(range: 32..<40, velocity: selectedControl.idleVelocity) }
                             Button("FILL 3x3") { engine.setZoneLEDs(range: 40..<49, velocity: selectedControl.idleVelocity) }
                             Button("ALL 49") { engine.setZoneLEDs(range: 0..<49, velocity: selectedControl.idleVelocity) }
                         }
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
                         .buttonStyle(.plain)
                         .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.4))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3.5)
+                        .background(Color.black.opacity(0.55))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     } else {
                         // TAB 2: MIDI -> QWERTY KEYBOARD MAPPING
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 5) {
                             // Mode Toggle: MIDI Only vs QWERTY Active
                             HStack {
                                 Text("KEY MODE:")
-                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                    .foregroundColor(Color(white: 0.6))
+                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.70))
 
                                 Spacer()
 
@@ -15660,18 +19515,18 @@ struct ContentView: View {
                                     engine.saveCurrentSlot()
                                     SoundEffect.knobTick.play(with: engine.soundPack)
                                 }) {
-                                    HStack(spacing: 3) {
+                                    HStack(spacing: 4) {
                                         Circle()
                                             .fill(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color(white: 0.4))
-                                            .frame(width: 5, height: 5)
+                                            .frame(width: 6, height: 6)
                                         Text(engine.controls[engine.selectedIndex].actionType == .qwerty ? "QWERTY ACTIVE" : "MIDI PASS-THRU")
-                                            .font(.system(size: 7.2, weight: .heavy, design: .monospaced))
+                                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                     }
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2.5)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3.5)
                                     .background(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25).opacity(0.2) : Color.white.opacity(0.08))
-                                    .foregroundColor(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color(white: 0.6))
-                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                    .foregroundColor(engine.controls[engine.selectedIndex].actionType == .qwerty ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color(white: 0.70))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -15681,10 +19536,10 @@ struct ContentView: View {
                                 let curKey = curStep.key
 
                                 // Key Picker & Live Test
-                                HStack(spacing: 4) {
+                                HStack(spacing: 5) {
                                     Text("KEY:")
-                                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                        .foregroundColor(Color(white: 0.6))
+                                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.70))
 
                                     // Quick Pick Menu
                                     Menu {
@@ -15710,18 +19565,18 @@ struct ContentView: View {
                                             }
                                         }
                                     } label: {
-                                        HStack(spacing: 2) {
+                                        HStack(spacing: 3) {
                                             Text(curKey.uppercased())
-                                                .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                                .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                                 .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
                                             Image(systemName: "chevron.up.chevron.down")
-                                                .font(.system(size: 5.5))
-                                                .foregroundColor(Color(white: 0.6))
+                                                .font(.system(size: 8))
+                                                .foregroundColor(Color(white: 0.7))
                                         }
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2.5)
-                                        .background(Color.black.opacity(0.6))
-                                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3.5)
+                                        .background(Color.black.opacity(0.65))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
                                     }
                                     .menuStyle(.borderlessButton)
 
@@ -15733,13 +19588,13 @@ struct ContentView: View {
                                             setQwertyKeyForSelection(clean)
                                         }
                                     ))
-                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
                                     .textFieldStyle(.plain)
-                                    .frame(width: 44)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 2)
-                                    .background(Color.black.opacity(0.6))
-                                    .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                    .frame(width: 48)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2.5)
+                                    .background(Color.black.opacity(0.65))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
 
                                     Spacer()
 
@@ -15749,73 +19604,73 @@ struct ContentView: View {
                                             engine.triggerSingleQwerty(key: step.key, cmd: step.cmd, shift: step.shift, alt: step.alt, ctrl: step.ctrl)
                                         }
                                     }) {
-                                        HStack(spacing: 2) {
+                                        HStack(spacing: 3) {
                                             Image(systemName: "play.fill")
-                                                .font(.system(size: 6))
+                                                .font(.system(size: 8))
                                             Text("TEST")
-                                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
                                         }
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2.5)
-                                        .background(Color.green.opacity(0.2))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.green.opacity(0.25))
                                         .foregroundColor(.green)
-                                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
                                     }
                                     .buttonStyle(.plain)
                                 }
 
                                 // Modifiers Row
-                                HStack(spacing: 3) {
+                                HStack(spacing: 4) {
                                     Text("MODS:")
-                                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                                        .foregroundColor(Color(white: 0.6))
+                                        .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.70))
                                     Button(action: { toggleQwertyModifierForSelection { $0.cmd.toggle() } }) {
                                         Text("⌘ CMD")
-                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 2)
+                                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2.5)
                                             .background(curStep.cmd ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
-                                            .foregroundColor(curStep.cmd ? .black : Color(white: 0.75))
-                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .foregroundColor(curStep.cmd ? .black : Color(white: 0.80))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                     }
                                     .buttonStyle(.plain)
 
                                     Button(action: { toggleQwertyModifierForSelection { $0.shift.toggle() } }) {
                                         Text("⇧ SHIFT")
-                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 2)
+                                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2.5)
                                             .background(curStep.shift ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
-                                            .foregroundColor(curStep.shift ? .black : Color(white: 0.75))
-                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .foregroundColor(curStep.shift ? .black : Color(white: 0.80))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                     }
                                     .buttonStyle(.plain)
 
                                     Button(action: { toggleQwertyModifierForSelection { $0.alt.toggle() } }) {
                                         Text("⌥ OPT")
-                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 2)
+                                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2.5)
                                             .background(curStep.alt ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
-                                            .foregroundColor(curStep.alt ? .black : Color(white: 0.75))
-                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .foregroundColor(curStep.alt ? .black : Color(white: 0.80))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                     }
                                     .buttonStyle(.plain)
 
                                     Button(action: { toggleQwertyModifierForSelection { $0.ctrl.toggle() } }) {
                                         Text("⌃ CTRL")
-                                            .font(.system(size: 6.8, weight: .heavy, design: .monospaced))
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 2)
+                                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2.5)
                                             .background(curStep.ctrl ? Color(red: 0.98, green: 0.78, blue: 0.25) : Color.white.opacity(0.08))
-                                            .foregroundColor(curStep.ctrl ? .black : Color(white: 0.75))
-                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .foregroundColor(curStep.ctrl ? .black : Color(white: 0.80))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3.5))
                                     }
                                     .buttonStyle(.plain)
                                 }
 
                                 // Quick Shortcut Templates Row
-                                HStack(spacing: 3) {
+                                HStack(spacing: 4) {
                                     Button("SPACE") { setQwertyKeyForSelection("space") }
                                     Button("RETURN") { setQwertyKeyForSelection("return") }
                                     Button("ESC") { setQwertyKeyForSelection("escape") }
@@ -15832,26 +19687,27 @@ struct ContentView: View {
                                         toggleQwertyModifierForSelection { $0.cmd = true }
                                     }
                                 }
-                                .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 10, weight: .heavy, design: .monospaced))
                                 .buttonStyle(.plain)
                                 .foregroundColor(Color(red: 0.98, green: 0.78, blue: 0.25))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(Color.black.opacity(0.4))
-                                .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                             } else {
                                 Text("Key acts as standard physical MIDI Note On / Off message.")
-                                    .font(.system(size: 7.2, weight: .medium, design: .monospaced))
-                                    .foregroundColor(Color(white: 0.6))
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundColor(Color(white: 0.70))
                                     .padding(.vertical, 6)
                             }
                         }
-                        .padding(5)
-                        .background(Color.white.opacity(0.03))
+                        .padding(6)
+                        .background(Color.white.opacity(0.04))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                } else {                    Text("ANALOG CC VALUE: \(selectedControl.liveValue)")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                } else {
+                    Text("ANALOG CC VALUE: \(selectedControl.liveValue)")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(red: 0.96, green: 0.78, blue: 0.35))
                         .padding(.vertical, 10)
                 }
@@ -15861,15 +19717,20 @@ struct ContentView: View {
                 // RX Stream Telemetry
                 HStack {
                     Text("RX STREAM:")
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white: 0.72))
+                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                        .foregroundColor(Color(white: 0.80))
+                        .lineLimit(1)
                     Spacer()
                     Text(engine.lastStreamMessage)
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(engine.currentTheme.accentPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
+                .padding(.horizontal, 4)
             }
-            .padding(10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
         }
         .onChange(of: engine.selectedIndex) {
             isEditingNameBox = false
@@ -15882,26 +19743,37 @@ struct ContentView: View {
         }
     }
 
-    // ------------------------------------------------------------------------
     // SECTION 3: 3X3 KEYPAD & OFFICIAL MASCOT (9 KEYS)
     // ------------------------------------------------------------------------
     private var section3KeypadAndMascot: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 6) {
             // Interactive Official Mascot (bitchboy.png) with Speech Bubble
-            ZStack(alignment: .top) {
-                // Speech Bubble
-                if engine.mascotSpeechVisible {
-                    Text(engine.mascotSpeech)
-                        .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.85))
+            VStack(spacing: 3) {
+                // Speech Bubble Clearance Zone (Dedicated clearance above mascot so it never clips knobs)
+                ZStack(alignment: .bottom) {
+                    if engine.mascotSpeechVisible {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 8, weight: .bold))
+                            Text(engine.mascotSpeech)
+                                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color(red: 0.05, green: 0.08, blue: 0.10).opacity(0.95))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(engine.currentTheme.accentPrimary, lineWidth: 1))
-                        .offset(y: -18)
-                        .transition(.scale.combined(with: .opacity))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(engine.currentTheme.accentPrimary.opacity(0.8), lineWidth: 1)
+                        )
+                        .shadow(color: engine.currentTheme.accentPrimary.opacity(0.35), radius: 4)
+                        .transition(.scale(scale: 0.9).combined(with: .opacity))
+                    }
                 }
+                .frame(width: 226, height: engine.mascotSpeechVisible ? 24 : 0)
 
                 BitchBoyOfficialMascotView(auraColor: engine.currentTheme.accentPrimary) {
                     engine.triggerMascotTap()
@@ -15909,13 +19781,23 @@ struct ContentView: View {
                 .scaleEffect(engine.mascotScale)
                 .animation(.spring(response: 0.25, dampingFraction: 0.5), value: engine.mascotScale)
             }
-            .padding(.top, 12)
 
-            HStack {
-                Text("3. 3X3 KEYPAD (9 KEYS)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+            HStack(spacing: 5) {
+                Text("3. 3X3 KEYPAD")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(engine.currentTheme.headerText)
-                Spacer()
+                    .lineLimit(1)
+
+                Text("9 KEYS")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                Spacer(minLength: 4)
+
                 if engine.detachedModules.contains(.keypad3x3) {
                     Text("POPPED OUT")
                         .font(.system(size: 7, weight: .heavy, design: .monospaced))
@@ -15929,20 +19811,22 @@ struct ContentView: View {
                     engine.popOutModuleToWindow(.keypad3x3)
                 }) {
                     Image(systemName: "macwindow.badge.plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(engine.currentTheme.accentPrimary)
-                        .padding(3)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                 }
                 .buttonStyle(.plain)
+                .hoverGrow(1.08)
                 .help("Pop Out 3x3 Keypad into Floating Window")
             }
+            .frame(width: 226)
 
-            // 3x3 Grid
-            VStack(spacing: 4) {
+            // 3x3 Grid with Spaced Tactile Keycaps
+            VStack(spacing: 7) {
                 ForEach(0..<3, id: \.self) { r in
-                    HStack(spacing: 4) {
+                    HStack(spacing: 7) {
                         ForEach(0..<3, id: \.self) { c in
                             let idx = 40 + r * 3 + c
                             HardwareKeyCap(
@@ -15950,6 +19834,8 @@ struct ContentView: View {
                                 isSelected: engine.selectedIndices.contains(idx) || engine.selectedIndex == idx,
                                 color: ledColor(engine.controls[idx].currentLED),
                                 sectionBorder: engine.currentTheme.sectionOutline,
+                                keyWidth: 58,
+                                keyHeight: 44,
                                 onTap: {
                                     isEditingNameBox = false
                                     let isShift = NSEvent.modifierFlags.contains(.shift)
@@ -15957,30 +19843,59 @@ struct ContentView: View {
                                 }
                             )
                             .equatable()
+                            .contextMenu { controlContextMenu(for: idx) }
                         }
                     }
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Color(red: 0.08, green: 0.04, blue: 0.04).opacity(0.8))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(engine.currentTheme.sectionOutline.opacity(0.85), lineWidth: 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(engine.isSectionEnabled(for: 40))
+            .overlay {
+                if !engine.isSectionEnabled(for: 40) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                        VStack(spacing: 5) {
+                            Image(systemName: "poweroff")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.22))
+                            Text("KEYPAD // BLACKOUT")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.30))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .transition(.opacity)
+                }
+            }
 
             // Footer branding
-            VStack(spacing: 1) {
-                Text("CE 🗑")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(white: 0.5))
-                Text("BitchBoy")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(white: 0.6))
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("CE")
+                        .font(.system(size: 8.0, weight: .heavy, design: .monospaced))
+                    Image(systemName: "trash.fill")
+                        .font(.system(size: 7.5, weight: .bold))
+                    Text("•")
+                        .font(.system(size: 8.0))
+                    Text("BitchBoy")
+                        .font(.system(size: 8.0, weight: .heavy, design: .monospaced))
+                }
+                .foregroundColor(Color(white: 0.65))
+
                 Text("BLOCK SYSTEM HARDWARE")
-                    .font(.system(size: 6, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(white: 0.4))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(Color(white: 0.50))
             }
+            .padding(.top, 4)
         }
     }
 }
@@ -15991,21 +19906,24 @@ struct ContentView: View {
 
 @main
 struct BitchBoyNativeApp: App {
-    @StateObject private var engine = BitchBoyEngine()
+    @State private var engine = BitchBoyEngine()
 
     var body: some Scene {
         WindowGroup("BitchManager") {
             ContentView(engine: engine)
                 .frame(minWidth: 1538 * 0.25, minHeight: 760 * 0.15)
         }
+        .defaultSize(width: 1540, height: 860)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About BitchManager...") {
                     let creditsText = """
                     BitchBoy Hardware Controller Manager & Studio Console
-                    Release 2.0 • Created by Taylor Fossen
+                    Release 3.0 • Created by Taylor Fossen
 
                     • 49-Pad LED Matrix & Reactive FX Engine
+                    • Right-Click Mapping & Assignment Editor for every control
+                    • Undo / Redo, Copy / Paste & Hardware MIDI Isolation Profiles
                     • Pop-out Standalone Floating Modules (⌘W auto re-dock)
                     • Protocol Terminal & Network Traffic Monitor:
                       - Live MIDI IN/OUT, OSC IN/OUT, Art-Net & sACN (E1.31) packet sniffer
@@ -16025,8 +19943,8 @@ struct BitchBoyNativeApp: App {
                     )
                     var options: [NSApplication.AboutPanelOptionKey: Any] = [
                         .applicationName: "BitchManager",
-                        .applicationVersion: "2.0.0",
-                        .version: "Version 2.0.0 (4)",
+                        .applicationVersion: "3.0.0",
+                        .version: "Version 3.0.0 (5)",
                         .credits: attrString
                     ]
                     if let icon = NSImage(named: "AppIcon") ?? NSImage(named: "BitchBoyBadgeIcon") {
@@ -16038,6 +19956,69 @@ struct BitchBoyNativeApp: App {
                     engine.checkForUpdates(showModalIfCurrent: true)
                 }
                 Divider()
+            }
+
+            CommandGroup(replacing: .undoRedo) {
+                Button(engine.lastUndoActionName.isEmpty ? "Undo" : "Undo \(engine.lastUndoActionName)") {
+                    engine.undo()
+                }
+                .keyboardShortcut("z", modifiers: [.command])
+                .disabled(!engine.canUndo)
+
+                Button(engine.lastRedoActionName.isEmpty ? "Redo" : "Redo \(engine.lastRedoActionName)") {
+                    engine.redo()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!engine.canRedo)
+            }
+
+            CommandGroup(replacing: .pasteboard) {
+                Button("Cut") {
+                    engine.copyControl(index: engine.selectedIndex)
+                    engine.resetControl(index: engine.selectedIndex)
+                }
+                .keyboardShortcut("x", modifiers: [.command])
+
+                Button("Copy Control Configuration") {
+                    engine.copyControl(index: engine.selectedIndex)
+                }
+                .keyboardShortcut("c", modifiers: [.command])
+
+                Button("Paste Control Configuration") {
+                    engine.pasteControlToSelected()
+                }
+                .keyboardShortcut("v", modifiers: [.command])
+                .disabled(!engine.hasCopiedConfig)
+
+                Button("Paste Color Only") {
+                    engine.pasteColorToSelected()
+                }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+                .disabled(!engine.hasCopiedColor)
+
+                Button("Duplicate Control Configuration") {
+                    engine.duplicateControl(index: engine.selectedIndex)
+                }
+                .keyboardShortcut("d", modifiers: [.command])
+
+                Divider()
+
+                Button("Select All Controls") {
+                    engine.selectedIndices = Set(0..<engine.controls.count)
+                }
+                .keyboardShortcut("a", modifiers: [.command])
+
+                Button("Deselect All") {
+                    engine.selectedIndices.removeAll()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+
+                Divider()
+
+                Button("Clear Undo History") {
+                    engine.clearUndoHistory()
+                }
+                .disabled(!engine.canUndo && !engine.canRedo)
             }
 
             CommandGroup(replacing: .saveItem) {
@@ -16224,6 +20205,30 @@ struct BitchBoyNativeApp: App {
                 Button("Inject Mock Test Protocol Packets") {
                     engine.injectTestProtocolPacket()
                 }
+
+                Divider()
+
+                Button("Increase Terminal Text Size") {
+                    engine.increaseTerminalFontSize()
+                }
+                .keyboardShortcut("=", modifiers: [.command, .option])
+
+                Button("Decrease Terminal Text Size") {
+                    engine.decreaseTerminalFontSize()
+                }
+                .keyboardShortcut("-", modifiers: [.command, .option])
+
+                Button("Reset Terminal Text Size to Default") {
+                    engine.resetTerminalFontSize()
+                }
+                .keyboardShortcut("0", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Unmute & Enable All Inputs") {
+                    engine.unmuteAllInputs()
+                }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
             }
 
             CommandMenu("Presets") {

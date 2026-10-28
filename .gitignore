@@ -17,6 +17,9 @@ DerivedData/
 !default.perspectivev3
 .agents/
 .gemini/
-BB/
+BB/*
 !BB/BitchBoyApp.swift
+!BB/Assets.xcassets/
+BB/Assets.xcassets/*
+!BB/Assets.xcassets/SquirrelLogo.imageset/
 BB.xcodeproj/
